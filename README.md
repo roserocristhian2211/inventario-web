@@ -20,7 +20,7 @@ El código de este repositorio es público; los productos, salidas, fotografías
 
 ## Funciones
 
-- Productos y unidades, materiales directos e indirectos; búsqueda, edición y eliminación lógica.
+- **Solo Material directo**: productos y unidades; búsqueda, edición y eliminación lógica. Los registros de material indirecto anteriores permanecen almacenados, pero no aparecen en la interfaz ni se importan nuevos indirectos.
 - Entradas y salidas con guías/documentos, traspasos por piscina, conteos y ajustes.
 - Fotos de productos y alertas de agotamiento y existencia mínima.
 - Funcionamiento sin internet tras la primera visita y almacenamiento en **IndexedDB** del navegador.
