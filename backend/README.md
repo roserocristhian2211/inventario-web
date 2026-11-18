@@ -1,0 +1,11 @@
+# Bodega compartida
+La interfaz sigue en GitHub Pages. La API verifica la firma de Microsoft, el emisor de cuentas personales y el identificador de esta aplicación. Un Durable Object con SQLite mantiene el catálogo, las invitaciones y el diario de movimientos. Cada escritura comprueba el rol y el saldo en una transacción. Los usuarios activos se identifican por el sujeto estable de Microsoft. Las invitaciones se entregan personalmente y se canjean una vez con la cuenta indicada.
+
+## Activar en Cloudflare
+1. En este directorio, instalar las dependencias con npm y desplegar con Wrangler en la cuenta del titular. El nombre es inventario-bodega. Configurar ADMIN_EMAIL con el correo del administrador y ADMIN_SUB con el identificador verificado de su cuenta. Esas variables se pueden guardar como secretos de Workers.
+2. Para obtener el identificador antes de activar, abrir la app personal con la cuenta administradora y el panel de configuración. Abrir «Identificador de mi cuenta Microsoft» y copiar el identificador que aparece en la sesión del titular. Configurar ADMIN_SUB por un canal administrativo de Cloudflare. La ruta /identity funciona antes de configurar los secretos y solo devuelve la identidad del solicitante.
+3. Antes del cambio, sincronizar la versión personal en OneDrive y descargar el respaldo JSON desde Configuración. Configurar TEAM_API en team-config.js con el origen exacto de producción y cambiar la versión del caché en sw.js al activar. Publicar la interfaz en Pages. El modo de equipo usa una base local diferente y requiere internet para confirmar operaciones.
+4. Entrar como administrador, incorporar el respaldo anterior en Configuración, verificar saldos y usar Generar invitación para cada correo. Enviar el enlace de un solo uso a esa persona. Retirar acceso invalida las siguientes consultas y escrituras. Los archivos ya exportados o vistos quedan en el dispositivo.
+5. Guardar respaldos del inventario compartido en el OneDrive del administrador desde Configuración. Las altas y bajas del equipo se gestionan en Cloudflare y quedan fuera de estos respaldos de inventario.
+
+Para reproducir las pruebas del registro y saldos, ejecutar node --test ledger.test.mjs con Node 24.

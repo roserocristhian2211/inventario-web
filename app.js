@@ -1,3 +1,4 @@
+import {TEAM_API} from './team-config.js';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const DB='inventario-web-independiente-v1', GRAPH='https://graph.microsoft.com/v1.0',MARK='identidad-inventario-web.json';
@@ -14,9 +15,89 @@ async function openDB(name=DB){return new Promise((resolve,reject)=>{const r=ind
 async function store(n,mode,fn){const t=db.transaction(n,mode);let r=await fn(t.objectStore(n));await new Promise((yes,no)=>{t.oncomplete=yes;t.onerror=()=>no(t.error);t.onabort=()=>no(t.error)});return r}
 const all=n=>store(n,'readonly',s=>req(s.getAll())),one=(n,id)=>store(n,'readonly',s=>req(s.get(id))),put=(n,x)=>store(n,'readwrite',s=>req(s.put(x)));
 async function setting(k,v){settings[k]=v;await put('settings',{id:k,value:v})}
+let teamUser=null, pulling=null;
+const canManage=()=>!TEAM_API||teamUser?.role==='admin';
+async function teamCall(path,body={}){
+  if(!navigator.onLine)throw Error('Conéctate para confirmar la operación en la bodega.');
+  await token();
+  const res=await fetch(TEAM_API+path,{method:'POST',headers:{Authorization:'Bearer '+session.id_token,'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const data=await res.json();
+  if(!res.ok){
+    if(res.status===403&&data.error==='Cuenta sin acceso a esta bodega.'&&teamUser){teamUser=null;location.replace(redirect())}
+    throw Error(data.error||'No se pudo contactar a la bodega.')
+  }
+  return data
+}
+async function pullTeam(){
+  if(pulling)return pulling;
+  pulling=(async()=>{
+    const previousSync=settings.lastSync, incoming=[];let rows;
+    do{
+      const result=await teamCall('/changes',{after:settings.cursor||0});
+      rows=result.rows;
+      for(const {event} of rows){
+        if(event.data.photo&&!await one('photos',event.data.photo)){
+          const photo=await teamCall('/photo',{id:event.data.photo});
+          if(photo.data)await put('photos',{id:event.data.photo,data:photo.data,synced:true})
+        }
+        if(previousSync&&['entrada','salida'].includes(event.type)&&!await one('events',event.id))incoming.push(event);
+        await put('events',event)
+      }
+      if(rows.length)await setting('cursor',rows.at(-1).seq);
+      if(result.name)await setting('name',result.name);
+    }while(rows.length===200);
+    await setting('lastSync',new Date().toISOString());await reload();
+    for(const event of incoming){const product=active().find(p=>p.id===event.data.pid);if(product)notifyMove(event,product)}
+  })().finally(()=>{pulling=null});
+  return pulling
+}
+async function commitEvent(event){
+  if(!TEAM_API){await put('events',event);return}
+  if(event.data.photo){
+    const photo=await one('photos',event.data.photo);
+    if(photo&&!photo.synced){await teamCall('/photo-save',photo);await put('photos',{...photo,synced:true})}
+  }
+  const saved=await teamCall('/event',event);await put('events',saved)
+}
+async function listMembers(){
+  const {active,pending}=await teamCall('/members');
+  $('#member-list').innerHTML=[...active.map(x=>[x.email,'Activo']),...pending.map(x=>[x.email,'Invitación pendiente'])].map(([address,state])=>'<div class="item"><div class="item-body">'+esc(address)+'<p>'+state+'</p></div><button class="small" data-revoke="'+esc(address)+'">Retirar acceso</button></div>').join('')||empty('Todavía no has agregado usuarios.')
+}
+async function backupTeam(){
+  await pullTeam();
+  const name='respaldo-bodega-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json';
+  const folder=await childFolder((await j('/me/drive/root?$select=id')).id,'Respaldos Inventario Web');
+  await up(folder.id,name,JSON.stringify({format:'inventario-web-independent-v1',events,photos}),'application/json');
+  toast('Respaldo guardado en tu OneDrive.')
+}
+async function importTeam(file){
+  const data=JSON.parse(await file.text());
+  if(data.format!=='inventario-web-independent-v1'||!Array.isArray(data.events)||!Array.isArray(data.photos))throw Error('Selecciona un respaldo JSON de Inventario Web.');
+  if(!confirm('¿Incorporar '+data.events.length+' registros de este respaldo a la bodega compartida?'))return;
+  for(const photo of data.photos)await teamCall('/photo-save',photo);
+  const ordered=[...data.events].sort((a,b)=>Number(b.type==='create')-Number(a.type==='create')||a.ts.localeCompare(b.ts)||a.id.localeCompare(b.id));
+  for(let i=0;i<ordered.length;i+=100)await teamCall('/import',{events:ordered.slice(i,i+100)});
+  await pullTeam();toast('Respaldo incorporado a la bodega.')
+}
+function setupTeam(){
+  $('#team-tools').hidden=!canManage();
+  for(const el of $$('[data-action="producto"],#import-csv,#name,#save-name')){if(!canManage())(el.closest('label')||el).hidden=true}
+  $('#settings-link').addEventListener('click',()=>{if(canManage())listMembers().catch(fail)});
+  $('#invite-form').onsubmit=async e=>{
+    e.preventDefault();
+    try{const {code}=await teamCall('/invite',{email:$('#member-email').value});
+      $('#invite-result').value=redirect()+'#invitar='+code;await listMembers()}catch(error){fail(error)}
+  };
+  $('#member-list').onclick=async e=>{
+    const address=e.target.closest('[data-revoke]')?.dataset.revoke;
+    if(address&&confirm('¿Retirar el acceso de '+address+'?'))try{await teamCall('/remove',{email:address});$('#invite-result').value='';await listMembers()}catch(error){fail(error)}
+  };
+  $('#team-backup').onclick=()=>backupTeam().catch(fail);
+  $('#team-import').onchange=e=>{const file=e.target.files[0];if(file)importTeam(file).catch(fail);e.target.value=''};
+}
 function dateLabel(s){return String(s||'').slice(0,10)}
 function record(type,data){data={...data,actor:session.profile.label};return {id:uid(),type,date:today(),ts:new Date().toISOString(),data,synced:false}}
-async function saveEvent(type,data){await put('events',record(type,data));await reload()}
+async function saveEvent(type,data){await commitEvent(record(type,data));await reload()}
 function compute(){let p=new Map();moves=[];alerts=[];let sorted=[...events].sort((a,b)=>Number(b.type==='create')-Number(a.type==='create')||String(a.ts).localeCompare(String(b.ts))||String(a.id).localeCompare(String(b.id)));
 for(const e of sorted){let d=e.data||{},x=p.get(d.pid);
 if(e.type==='create'){if(p.has(d.pid)){alerts.push('Producto duplicado');continue}p.set(d.pid,{id:d.pid,code:d.code,name:d.name,unit:d.unit,cat:d.cat,min:d.min||0,photo:d.photo||null,stock:0,deleted:false});continue}
@@ -30,7 +111,7 @@ let codes=new Set();for(const x of inventory){x.stock=Math.round(x.stock*100000)
 async function reload(){events=await all('events');photos=await all('photos');compute();render()}
 function active(){return inventory.filter(p=>!p.deleted&&p.cat==='directo')}
 const pic=id=>photos.find(x=>x.id===id)?.data||'';
-function productRow(p,actions){let state=p.stock<=0?'<span class="tag danger">Agotado</span>':p.min>0&&p.stock<p.min?'<span class="tag warning">Bajo mínimo</span>':'<span class="tag">Disponible</span>';let buttons=actions?'<div class="item-buttons"><button data-edit="'+esc(p.id)+'">Editar</button><button data-move="'+esc(p.id)+'">Movimiento</button><button class="danger" data-delete="'+esc(p.id)+'">Eliminar</button></div>':'';return '<div class="item">'+(p.photo?'<img class="thumb" src="'+esc(pic(p.photo))+'" alt="Foto del producto">':'')+'<div class="item-body"><h3>'+esc(p.name)+'</h3><p>'+esc(p.code)+' · '+esc(p.unit)+' · '+'Material directo'+'</p>'+buttons+'</div><div class="quantity"><strong>'+fmt(p.stock)+'</strong><small>'+esc(p.unit)+'</small>'+state+'</div></div>'}
+function productRow(p,actions){let state=p.stock<=0?'<span class="tag danger">Agotado</span>':p.min>0&&p.stock<p.min?'<span class="tag warning">Bajo mínimo</span>':'<span class="tag">Disponible</span>';if(actions&&!canManage())return productRow(p,false).replace('</h3>','</h3><button class="small" data-move="'+esc(p.id)+'">Movimiento</button>');let buttons=actions?'<div class="item-buttons"><button data-edit="'+esc(p.id)+'">Editar</button><button data-move="'+esc(p.id)+'">Movimiento</button><button class="danger" data-delete="'+esc(p.id)+'">Eliminar</button></div>':'';return '<div class="item">'+(p.photo?'<img class="thumb" src="'+esc(pic(p.photo))+'" alt="Foto del producto">':'')+'<div class="item-body"><h3>'+esc(p.name)+'</h3><p>'+esc(p.code)+' · '+esc(p.unit)+' · '+'Material directo'+'</p>'+buttons+'</div><div class="quantity"><strong>'+fmt(p.stock)+'</strong><small>'+esc(p.unit)+'</small>'+state+'</div></div>'}
 function empty(t){return '<div class="empty">'+esc(t)+'</div>'}
 function moveRow(m){let q=m.type==='salida'?'-':m.type==='entrada'?'+':m.type==='ajuste'&&m.q>=0?'+':'';return '<div class="item"><div class="item-body"><h3>'+esc(m.prod)+'</h3><p>'+esc(m.date)+(m.data.actor?' · '+esc(m.data.actor):'')+' · '+esc(m.data.doc||'Sin documento')+' · '+esc(m.data.origin||'')+(m.data.dest?' → '+esc(m.data.dest):'')+'</p><span class="tag">'+esc(m.type.toUpperCase())+'</span></div><div class="quantity"><strong>'+q+fmt(m.q)+'</strong><small>'+esc(m.unit)+'</small></div></div>'}
 function render(){if(!session?.profile)return;let pp=active(),todayN=moves.filter(m=>m.date===today()&&inventory.find(x=>x.id===m.data.pid)?.cat==='directo').length;
@@ -48,33 +129,37 @@ $('#network').textContent=!navigator.onLine?'Sin conexión':busy?'Sincronizando�
 $('#account-label').textContent=$('#cloud-account').textContent=session.profile.label;
 $('#activity').innerHTML=moves.filter(m=>['entrada','salida'].includes(m.type)&&inventory.some(p=>p.id===m.data.pid&&p.cat==='directo')).slice(0,5).map(moveRow).join('')||empty('Aún no hay entradas ni salidas.');
 $('#account-exit').disabled=busy;
+if(TEAM_API){
+  for(const button of $$('[data-count]'))button.hidden=!canManage();
+  $('#account-label').textContent=teamUser.email+' · '+(canManage()?'Administrador':'Operador');
+}
 $('#notice-status').textContent=settings.deviceNotices&&globalThis.Notification?.permission==='granted'?'Avisos del dispositivo activados.':'Los avisos aparecen dentro de la aplicación.';
 $('#device-notices').textContent=settings.deviceNotices?'Desactivar notificaciones del dispositivo':'Activar notificaciones del dispositivo';
 $('#sync-now').disabled=busy||!navigator.onLine||!session;
 $('#alert').classList.toggle('hidden',!alerts.length);$('#alert').textContent=alerts.slice(0,5).join(' · ');
-$('#cloud-msg').textContent=events.filter(e=>!e.synced).length+' operaciones sin publicar en OneDrive. Última sincronización: '+(settings.lastSync||'nunca');
+$('#cloud-msg').textContent=TEAM_API?'Bodega compartida · Última actualización: '+(settings.lastSync||'pendiente'):events.filter(e=>!e.synced).length+' operaciones sin publicar en OneDrive. Última sincronización: '+(settings.lastSync||'nunca');
 }
 function show(id){page=id;window.scrollTo(0,0);$$('.page').forEach(el=>el.classList.toggle('hidden',el.id!=='p-'+id));$$('.navitem').forEach(el=>el.classList.toggle('on',el.dataset.page===id));render()}
 const field=(lab,name,val='',type='text',extra='')=>'<label>'+lab+'<input name="'+name+'" type="'+type+'" value="'+esc(val)+'" '+extra+'></label>';
 const select=(lab,name,opts,selected)=>'<label>'+lab+'<select name="'+name+'">'+opts.map(([v,t])=>'<option value="'+esc(v)+'" '+(v===selected?'selected':'')+'>'+esc(t)+'</option>').join('')+'</select></label>';
-function openEditor(kind,pid=null,initial='entrada'){let p=inventory.find(x=>x.id===pid);editor={kind,pid};let h='';
+function openEditor(kind,pid=null,initial='entrada'){let p=inventory.find(x=>x.id===pid);editor={kind,pid,expected:p?.stock};let h='';
 if(kind==='producto'){$('#modal-title').textContent=p?'Editar producto':'Nuevo producto';h+=field('Código','code',p?.code||'','text','required maxlength="35"')+field('Descripción','name',p?.name||'','text','required maxlength="160"');h+=select('Unidad','unit',['SC','KG','LT','UND','CJ','PZ','GL','M'].map(x=>[x,x]),p?.unit||'UND');h+=field('Existencia mínima','min',p?.min??0,'number','required min="0" step="any"');h+='<label>Fotografía (opcional)<input type="file" name="picture" accept="image/jpeg,image/png,image/webp"></label>'}
 if(kind==='movimiento'){if(!active().length){toast('Primero agrega un producto.',true);return}$('#modal-title').textContent='Registrar movimiento';h+=select('Tipo de movimiento','type',[['entrada','Entrada de mercadería'],['salida','Salida de mercadería'],['traspaso','Traspaso entre piscinas']],initial);h+=select('Producto','pid',active().map(x=>[x.id,x.code+' · '+x.name+' ('+fmt(x.stock)+' '+x.unit+')']),pid||active()[0].id);h+=field('Cantidad','q','','number','required min="0.000001" step="any"')+field('Fecha','date',today(),'date','required')+field('Documento/guía','doc','','text','maxlength="75"')+field('Origen','origin','','text','maxlength="80"')+field('Destino/piscina','dest','','text','maxlength="80"')+field('Observaciones','note','','text','maxlength="180"');h+='<p class="subtle">Un traspaso entre piscinas no resta mercadería de bodega. Para registrar consumo usa Salida.</p>'}
 if(kind==='conteo'){if(!p)return;$('#modal-title').textContent='Conteo físico';h+='<div class="note">'+esc(p.name)+' · Existencia: '+fmt(p.stock)+' '+esc(p.unit)+'</div>'+field('Cantidad encontrada','q',p.stock,'number','required min="0" step="any"')+field('Observación','note','Conteo físico','text','maxlength="180"')}
 $('#fields').innerHTML=h;$('#modal').showModal()}
 async function imageData(file){if(file.size>10*1024*1024)throw Error('Imagen demasiado grande (máximo 10 MB).');if(!['image/png','image/jpeg','image/webp'].includes(file.type))throw Error('Formato de imagen inválido.');let bitmap=await createImageBitmap(file);let scale=Math.min(1,1200/Math.max(bitmap.width,bitmap.height));let can=document.createElement('canvas');can.width=Math.round(bitmap.width*scale);can.height=Math.round(bitmap.height*scale);can.getContext('2d').drawImage(bitmap,0,0,can.width,can.height);bitmap.close();return can.toDataURL('image/jpeg',.75)}
-async function submitEditor(e){e.preventDefault();try{const f=new FormData(e.target),v=k=>String(f.get(k)||'').trim(),kind=editor.kind,pid=editor.pid;
+async function submitEditor(e){e.preventDefault();const submit=e.target.querySelector('[type=submit]');if(submit.disabled)return;submit.disabled=true;try{const f=new FormData(e.target),v=k=>String(f.get(k)||'').trim(),kind=editor.kind,pid=editor.pid;
 if(kind==='producto'){let code=v('code'),name=v('name'),min=number(v('min'));if(!code||!name||min<0)throw Error('Completa el producto y el mínimo válido.');if(active().some(p=>p.id!==pid&&p.code.toLowerCase()===code.toLowerCase()))throw Error('Este código ya existe.');let prev=inventory.find(p=>p.id===pid),photo=prev?.photo||null,attached=f.get('picture');if(attached instanceof File&&attached.size){photo=uid();await put('photos',{id:photo,data:await imageData(attached),synced:false})}
 await saveEvent(pid?'edit':'create',{pid:pid||uid(),code,name,min,cat:'directo',unit:v('unit'),photo})}
-if(kind==='movimiento'){let x=active().find(p=>p.id===v('pid')),type=v('type'),q=number(v('q'));if(!x||q<=0)throw Error('Selecciona producto y cantidad válida.');if(type==='salida'&&q>x.stock)throw Error('Stock insuficiente para esta salida.');if(type==='traspaso'&&(!v('origin')||!v('dest')||v('origin')===v('dest')))throw Error('Indica piscinas de origen y destino distintas.');let ev=record(type,{pid:x.id,q,doc:v('doc'),origin:v('origin'),dest:v('dest'),note:v('note')});ev.date=v('date')||today();await put('events',ev);await reload();if(['entrada','salida'].includes(type))notifyMove(ev,x)}
-if(kind==='conteo'){let p=active().find(x=>x.id===pid),q=number(v('q'));if(!p||q<0)throw Error('La cantidad no puede ser negativa.');await saveEvent('ajuste',{pid,q:q-p.stock,note:v('note'),doc:'CONTEO'})}
-$('#modal').close();if(kind!=='movimiento'||v('type')==='traspaso')toast('Registro guardado en este dispositivo.');scheduleSync()}catch(err){fail(err)}}
+if(kind==='movimiento'){let x=active().find(p=>p.id===v('pid')),type=v('type'),q=number(v('q'));if(!x||q<=0)throw Error('Selecciona producto y cantidad válida.');if(type==='salida'&&q>x.stock)throw Error('Stock insuficiente para esta salida.');if(type==='traspaso'&&(!v('origin')||!v('dest')||v('origin')===v('dest')))throw Error('Indica piscinas de origen y destino distintas.');let ev=record(type,{pid:x.id,q,doc:v('doc'),origin:v('origin'),dest:v('dest'),note:v('note')});ev.date=v('date')||today();if(TEAM_API){const key=JSON.stringify([ev.type,ev.data,ev.date]);if(editor.submission?.key===key)ev.id=editor.submission.id;else editor.submission={key,id:ev.id}}await commitEvent(ev);await reload();if(['entrada','salida'].includes(type))notifyMove(ev,x)}
+if(kind==='conteo'){let p=active().find(x=>x.id===pid),q=number(v('q'));if(!p||q<0)throw Error('La cantidad no puede ser negativa.');await saveEvent('ajuste',{pid,q:q-(TEAM_API?editor.expected:p.stock),expected:editor.expected,note:v('note'),doc:'CONTEO'})}
+$('#modal').close();if(kind!=='movimiento'||v('type')==='traspaso')toast(TEAM_API?'Registro confirmado en la bodega.':'Registro guardado en este dispositivo.');scheduleSync()}catch(err){fail(err)}finally{submit.disabled=false}}
 async function exportJSON(){let json=JSON.stringify({format:'inventario-web-independent-v1',fecha:new Date().toISOString(),events,photos},null,2);download('respaldo-inventario-'+today()+'.json',json,'application/json')}
 function download(name,body,type){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([body],{type}));a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),3000)}
 function csvEscape(x){let s=String(x??'');return /[;"\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}
 function exportCSV(){download('productos-'+today()+'.csv','\uFEFF'+[['codigo','descripcion','unidad','categoria','minimo','stock'],...active().map(x=>[x.code,x.name,x.unit,x.cat,x.min,x.stock])].map(r=>r.map(csvEscape).join(';')).join('\r\n'),'text/csv')}
 function csvParse(txt){let t=txt.replace(/^\uFEFF/,''),sep=t.split(/\r?\n/,1)[0].includes(';')?';':',';let rows=[],row=[],cell='',quote=false;for(let i=0;i<t.length;i++){let ch=t[i];if(ch==='"'){if(quote&&t[i+1]==='"'){cell+='"';i++}else quote=!quote}else if(ch===sep&&!quote){row.push(cell);cell=''}else if((ch==='\n'||ch==='\r')&&!quote){if(ch==='\r'&&t[i+1]==='\n')i++;row.push(cell);if(row.some(v=>v.trim()))rows.push(row);row=[];cell=''}else cell+=ch}if(quote)throw Error('CSV inválido: comillas sin cerrar');row.push(cell);if(row.some(v=>v.trim()))rows.push(row);return rows}
-async function importCSV(file){let rows=csvParse(await file.text());let first=rows.shift()?.map(x=>x.toLowerCase().trim())||[];let get=(r,key)=>r[first.indexOf(key)];if(!first.includes('codigo')||!first.includes('descripcion'))throw Error('El CSV debe tener columnas codigo y descripcion.');let codes=new Set(active().map(x=>x.code.toLowerCase())),count=0;for(const r of rows){let code=(get(r,'codigo')||'').trim(),name=(get(r,'descripcion')||'').trim(),cat=(get(r,'categoria')||'').trim().toLowerCase();if((cat&&cat!=='directo'&&cat!=='material directo')||!code||!name||codes.has(code.toLowerCase()))continue;let min=Number(get(r,'minimo')||0);if(!Number.isFinite(min)||min<0)min=0;await put('events',record('create',{pid:uid(),code,name,unit:get(r,'unidad')||'UND',cat:'directo',min,photo:null}));codes.add(code.toLowerCase());count++}await reload();toast(count+' productos importados.')}
+async function importCSV(file){let rows=csvParse(await file.text());let first=rows.shift()?.map(x=>x.toLowerCase().trim())||[];let get=(r,key)=>r[first.indexOf(key)];if(!first.includes('codigo')||!first.includes('descripcion'))throw Error('El CSV debe tener columnas codigo y descripcion.');let codes=new Set(active().map(x=>x.code.toLowerCase())),count=0;for(const r of rows){let code=(get(r,'codigo')||'').trim(),name=(get(r,'descripcion')||'').trim(),cat=(get(r,'categoria')||'').trim().toLowerCase();if((cat&&cat!=='directo'&&cat!=='material directo')||!code||!name||codes.has(code.toLowerCase()))continue;let min=Number(get(r,'minimo')||0);if(!Number.isFinite(min)||min<0)min=0;await commitEvent(record('create',{pid:uid(),code,name,unit:get(r,'unidad')||'UND',cat:'directo',min,photo:null}));codes.add(code.toLowerCase());count++}await reload();toast(count+' productos importados.')}
 const SESSION_KEY='iw-oauth-session', CLIENT='0b22855f-0817-4124-8eb7-3e42296b5b17';
 function loadSession(){
   try{return JSON.parse(sessionStorage.getItem(SESSION_KEY)||localStorage.getItem(SESSION_KEY)||'null')}
@@ -116,7 +201,7 @@ async function children(id){let out=[],next='/me/drive/items/'+enc(id)+'/childre
 async function up(id,name,body,contentType){return j('/me/drive/items/'+enc(id)+':/'+enc(name)+':/content',{method:'PUT',headers:{'Content-Type':contentType},body})}
 async function childFolder(id,name){let existing=(await children(id)).find(x=>x.name===name);if(existing){if(!existing.folder)throw Error('Existe un archivo con el nombre '+name);return existing}return j('/me/drive/items/'+enc(id)+'/children',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,folder:{},'@microsoft.graph.conflictBehavior':'fail'})})}
 function folderName(){let x=$('#folder').value.trim();if(x.length<8||x.length>95||/[\\/:*?"<>|]/.test(x)||/gambirasi/i.test(x))throw Error('Usa un nombre de carpeta NUEVO, de 8 a 95 caracteres, diferente a Gambirasi.');return x}
-async function sync(){if(busy)return;if(!session||!navigator.onLine)throw Error('Conecta OneDrive y verifica internet.');busy=true;render();try{let folder=folderName(),drive=await j('/me/drive?$select=id,driveType,webUrl'),binding=settings.binding;if(binding&&(binding.driveId!==drive.id||binding.folder!==folder))throw Error('Este inventario local ya está vinculado a otro OneDrive. No se modificarán los datos.');let root;try{root=await j('/me/drive/root:/'+enc(folder))}catch(e){if(e.status!==404)throw e}if(!root)root=await j('/me/drive/root/children',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:folder,folder:{},'@microsoft.graph.conflictBehavior':'fail'})});if(!root.folder)throw Error('La ruta no es una carpeta.');let items=await children(root.id),marker=items.find(x=>x.name===MARK);if(!marker){if(items.length)throw Error('Carpeta existente sin identidad de esta app: elige otra carpeta vacía.');await up(root.id,MARK,JSON.stringify({app:'inventario-web-independent-v1',created:new Date().toISOString()}),'application/json')}else{let d=await (await graph('/me/drive/items/'+enc(marker.id)+'/content')).json();if(d.app!=='inventario-web-independent-v1')throw Error('Esta carpeta pertenece a otra aplicación.')}
+async function sync(){if(busy)return;if(TEAM_API){busy=true;render();try{await pullTeam()}finally{busy=false;render()}return}if(!session||!navigator.onLine)throw Error('Conecta OneDrive y verifica internet.');busy=true;render();try{let folder=folderName(),drive=await j('/me/drive?$select=id,driveType,webUrl'),binding=settings.binding;if(binding&&(binding.driveId!==drive.id||binding.folder!==folder))throw Error('Este inventario local ya está vinculado a otro OneDrive. No se modificarán los datos.');let root;try{root=await j('/me/drive/root:/'+enc(folder))}catch(e){if(e.status!==404)throw e}if(!root)root=await j('/me/drive/root/children',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:folder,folder:{},'@microsoft.graph.conflictBehavior':'fail'})});if(!root.folder)throw Error('La ruta no es una carpeta.');let items=await children(root.id),marker=items.find(x=>x.name===MARK);if(!marker){if(items.length)throw Error('Carpeta existente sin identidad de esta app: elige otra carpeta vacía.');await up(root.id,MARK,JSON.stringify({app:'inventario-web-independent-v1',created:new Date().toISOString()}),'application/json')}else{let d=await (await graph('/me/drive/items/'+enc(marker.id)+'/content')).json();if(d.app!=='inventario-web-independent-v1')throw Error('Esta carpeta pertenece a otra aplicación.')}
 let evFolder=await childFolder(root.id,'eventos'),phFolder=await childFolder(root.id,'fotos');
 await setting('binding',{driveId:drive.id,folder});
 let remote=await children(evFolder.id),ids=new Set();let received=0,sent=0;const newMoves=[];for(const f of remote){if(!/^[0-9a-f-]{36}\.json$/i.test(f.name))continue;let id=f.name.slice(0,-5);ids.add(id);let x=await one('events',id);if(x){if(!x.synced)await put('events',{...x,synced:true});continue}let content=await (await graph('/me/drive/items/'+enc(f.id)+'/content')).json();if(!content.event||content.event.id!==id)throw Error('Movimiento remoto inválido');await put('events',{...content.event,synced:true});received++;if(['entrada','salida'].includes(content.event.type))newMoves.push(content.event)}
@@ -133,6 +218,12 @@ function prepareReport(){
   $('#print-area').innerHTML='<h1>Reporte de salidas</h1><p>'+esc(date)+'</p><table><thead><tr><th>Producto</th><th>Cantidad</th><th>Destino</th><th>Documento</th></tr></thead><tbody>'+rows.map(m=>'<tr><td>'+esc(m.code)+' · '+esc(m.prod)+'</td><td>'+fmt(m.q)+' '+esc(m.unit)+'</td><td>'+esc(m.data.dest)+'</td><td>'+esc(m.data.doc)+'</td></tr>').join('')+'</tbody></table>';
 }
 function setup(){
+  // This display is informational. The Worker independently verifies the signature and subject.
+  try{
+    const part=session.id_token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
+    $('#identity-value').textContent=JSON.parse(atob(part)).sub;
+  }catch{$('#identity-help').hidden=true}
+
   $('#cloud-link').onclick=()=>show('onedrive');
   $('#settings-link').onclick=()=>show('ajustes');
   $('#view-attention').onclick=()=>{$('#stock-filter').value='alert';$('#find-product').value='';show('productos')};
@@ -143,7 +234,7 @@ function setup(){
  $$('.navitem').forEach(x=>x.onclick=()=>show(x.dataset.page));$$('[data-action]').forEach(x=>x.onclick=()=>openEditor(x.dataset.action));$('#editor').addEventListener('submit',submitEditor);$('#close').onclick=$('#cancel').onclick=()=>$('#modal').close();
 document.addEventListener('click',async e=>{let t=e.target.closest('[data-edit],[data-move],[data-delete],[data-count]');if(!t)return;try{if(t.dataset.edit)openEditor('producto',t.dataset.edit);if(t.dataset.move)openEditor('movimiento',t.dataset.move);if(t.dataset.count)openEditor('conteo',t.dataset.count);if(t.dataset.delete){let p=inventory.find(x=>x.id===t.dataset.delete);if(p&&confirm('¿Dar de baja el producto '+p.name+'? Sus movimientos se conservarán.'))await saveEvent('delete',{pid:p.id})}}catch(err){fail(err)}});
 ['#find-product','#find-move','#filter-type'].forEach(s=>$(s).addEventListener('input',render));
-$('#save-name').onclick=async()=>{await setting('name',$('#name').value.trim()||'Inventario Web');render();toast('Nombre guardado')};
+$('#save-name').onclick=async()=>{try{if(TEAM_API)await teamCall('/name',{name:$('#name').value.trim()||'Inventario Web'});await setting('name',$('#name').value.trim()||'Inventario Web');render();toast('Nombre guardado')}catch(error){fail(error)}};
 $('#export-json').onclick=exportJSON;$('#export-csv').onclick=exportCSV;
 $('#import-csv').onchange=async e=>{try{if(e.target.files[0])await importCSV(e.target.files[0])}catch(err){fail(err)}e.target.value=''};
 $('#account-exit').onclick=signOut;
@@ -172,6 +263,21 @@ async function selectDatabase(driveId){
   if(binding?.driveId!==driveId){db.close();db=await openDB(DB+'-account-'+session.profile.id)}
 }
 async function openAccount(){
+  if(TEAM_API){
+    const code=sessionStorage.getItem('iw-team-invitation');
+    teamUser=await teamCall(code?'/join':'/me',code?{code}:{});
+    sessionStorage.removeItem('iw-team-invitation');
+    setSession({...session,profile:{id:teamUser.subject,label:teamUser.email}});
+    db=await openDB(DB+'-shared-'+encodeURIComponent(TEAM_API)+'-'+teamUser.subject);
+    for(const row of await all('settings'))settings[row.id]=row.value;
+    setup();setupTeam();await pullTeam();
+    $('#name').value=settings.name||'Inventario Web';
+    $('#folder').closest('label').hidden=true;
+    $('#p-onedrive h2').textContent='Bodega compartida';
+    $('#access').hidden=true;$('#workspace').hidden=false;
+    setInterval(()=>{if(!document.hidden&&navigator.onLine)scheduleSync()},30000);
+    return
+  }
   if(!session.profile || navigator.onLine){
     const me=await j('/me?$select=id,displayName,mail,userPrincipalName');
     if(!me.id || (session.profile && me.id!==session.profile.id))throw Error('Vuelve a iniciar sesión para verificar tu cuenta.');
@@ -189,6 +295,9 @@ async function openAccount(){
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)scheduleSync()})
 }
 async function main(){
+  const invite=new URLSearchParams(location.hash.slice(1)).get('invitar');
+  if(TEAM_API&&invite){sessionStorage.setItem('iw-team-invitation',invite);history.replaceState({},'',location.pathname+location.search)}
+
   function setTheme(light){
     document.documentElement.classList.toggle('light',light);
     $('#theme-toggle').setAttribute('aria-label',light?'Activar tema oscuro':'Activar tema claro');
