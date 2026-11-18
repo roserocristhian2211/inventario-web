@@ -1,4 +1,6 @@
 import {createRemoteJWKSet,jwtVerify} from 'jose';
+import {syncCloud} from './cloud-sync.mjs';
+import {beginConnection,finishConnection} from './onedrive.mjs';
 import {Ledger,requireValue,email,uuid} from './ledger.mjs';
 const origin='https://roserocristhian2211.github.io';
 const tenant='9188040d-6c67-4c5b-b112-36a304b66dad';
@@ -9,6 +11,10 @@ const reply=(obj,status=200)=>Response.json(obj,{status,headers:cors});
 export default {async fetch(req,env){
   if(req.method==='OPTIONS')return new Response(null,{headers:cors});
   try{
+    if(req.method==='GET' && new URL(req.url).pathname==='/onedrive/callback'){
+      const stub=env.BODEGA.get(env.BODEGA.idFromName('inventario-central-v1'));
+      return stub.fetch(req);
+    }
     requireValue(req.method==='POST','Método inválido.',405);
     const path=new URL(req.url).pathname;
     let claims;
@@ -27,9 +33,26 @@ export default {async fetch(req,env){
 async function digest(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),x=>x.toString(16).padStart(2,'0')).join('')}
 export class Bodega {
   constructor(ctx,env){this.ctx=ctx;this.env=env;this.db=new Ledger(ctx.storage.sql)}
+  async alarm(){await syncCloud(this.ctx,this.env,this.db)}
   async fetch(req){
     try{
+      if(req.method==='GET' && new URL(req.url).pathname==='/onedrive/callback'){
+        await finishConnection(this.ctx.storage,this.env,new URL(req.url).searchParams,async token=>{
+          const {payload}=await jwtVerify(token,keys,{issuer,audience:'0b22855f-0817-4124-8eb7-3e42296b5b17',algorithms:['RS256'],requiredClaims:['exp','sub','nonce']});
+          return payload;
+        });
+        await this.ctx.storage.setAlarm(Date.now()+1000);
+        return new Response('Cuenta de OneDrive conectada. Puedes volver a Inventario Web.',{headers:{'Content-Type':'text/plain;charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
+      }
       const {subject,label,body}=await req.json(), path=new URL(req.url).pathname;
+      if(path==='/onedrive/status'){
+        requireValue(subject===this.env.ADMIN_SUB,'Acceso exclusivo del administrador.',403);
+        return reply({message:await this.ctx.storage.get('onedrive-status')||'Pendiente de autorización'});
+      }
+      if(path==='/onedrive/start'){
+        requireValue(subject===this.env.ADMIN_SUB,'Acceso exclusivo del administrador.',403);
+        return reply(await beginConnection(this.ctx.storage,this.env));
+      }
       const secret=path==='/invite'?crypto.randomUUID()+crypto.randomUUID():String(body.code||'');
       const hash=await digest(secret);
       const result=this.ctx.storage.transactionSync(()=>{

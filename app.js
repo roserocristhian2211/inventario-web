@@ -98,6 +98,11 @@ async function recoverPersonalInventory(){
   }finally{personal.close()}
 }
 function setupTeam(){
+  $('#settings-link').addEventListener('click',async()=>{if(canManage())try{$('#onedrive-status').textContent=(await teamCall('/onedrive/status')).message}catch(error){fail(error)}});
+  $('#onedrive-connect').onclick=async()=>{try{
+    const result=await teamCall('/onedrive/start');
+    location.assign(result.url);
+  }catch(error){fail(error)}};
   $('#team-recover').onclick=()=>recoverPersonalInventory().catch(fail);
   $('#team-tools').hidden=!canManage();
   for(const el of $$('[data-action="producto"],#import-csv,#name,#save-name')){if(!canManage())(el.closest('label')||el).hidden=true}
