@@ -1,4 +1,4 @@
-import {setupReportUI,familyOf,destinations} from './reports.js?v=9';
+import {setupReportUI,familyOf,compareProducts,destinations} from './reports.js?v=10';
 import {TEAM_API} from './team-config.js?v=6';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -133,7 +133,7 @@ if(e.type==='edit'){Object.assign(x,{code:d.code,name:d.name,unit:d.unit,cat:d.c
 if(e.type==='delete'){x.deleted=true;x.removed=e.date;continue}
 if(['entrada','salida','ajuste','traspaso'].includes(e.type)){let q=Number(d.q);if(!Number.isFinite(q)||(e.type!=='ajuste'&&q<=0)){alerts.push('Cantidad incorrecta: '+e.id);continue}if(e.type==='entrada')x.stock+=q;if(e.type==='salida')x.stock-=q;if(e.type==='ajuste')x.stock+=q;moves.push({...e,prod:x.name,code:x.code,unit:x.unit,q})}
 }
-inventory=[...p.values()].sort((a,b)=>a.name.localeCompare(b.name,'es'));moves.reverse();
+inventory=[...p.values()].sort(compareProducts);moves.reverse();
 let codes=new Set();for(const x of inventory){x.stock=Math.round(x.stock*100000)/100000;if(x.stock<0)alerts.push('Saldo negativo en '+x.code);if(!x.deleted&&x.cat==='directo'){if(codes.has(x.code.toLowerCase()))alerts.push('Código repetido '+x.code);codes.add(x.code.toLowerCase())}}}
 async function reload(){events=await all('events');photos=await all('photos');compute();render()}
 function active(){return inventory.filter(p=>!p.deleted&&p.cat==='directo')}
@@ -171,7 +171,7 @@ const field=(lab,name,val='',type='text',extra='')=>'<label>'+lab+'<input name="
 const select=(lab,name,opts,selected)=>'<label>'+lab+'<select name="'+name+'">'+opts.map(([v,t])=>'<option value="'+esc(v)+'" '+(v===selected?'selected':'')+'>'+esc(t)+'</option>').join('')+'</select></label>';
 function openEditor(kind,pid=null,initial='entrada'){let p=inventory.find(x=>x.id===pid);editor={kind,pid,expected:p?.stock};let h='';
 if(kind==='producto'){$('#modal-title').textContent=p?'Editar producto':'Nuevo producto';h+=field('Código','code',p?.code||'','text','required maxlength="35"')+field('Descripción','name',p?.name||'','text','required maxlength="160"');h+=select('Medida','unit',[...new Set(['SC','KG','LT','UND','CJ','PZ','GL','M',...(p?[p.unit]:[])])].map(x=>[x,x]),p?.unit||'SC');
-h+=select('Grupo','family',[['insumo','Insumo'],['balanceado','Balanceado']],p?familyOf(p):'insumo')+field('Libras por saco de balanceado (opcional)','lbs',p?.lbPerSack||'','number','min="0.000001" step="any"');
+h+=select('Grupo','family',[['balanceado','Balanceado'],['insumo','Insumo']],p?familyOf(p):'insumo')+field('Libras por saco de balanceado (opcional)','lbs',p?.lbPerSack||'','number','min="0.000001" step="any"');
 if(!p)h+=field('Inventario inicial','opening',0,'number','required min="0" step="any"');h+=field('Existencia mínima','min',p?.min??0,'number','required min="0" step="any"');h+='<label>Fotografía (opcional)<input type="file" name="picture" accept="image/jpeg,image/png,image/webp"></label>'}
 if(kind==='movimiento'){if(!active().length){toast('Primero agrega un producto.',true);return}$('#modal-title').textContent='Registrar movimiento';h+=select('Tipo de movimiento','type',[['entrada','Entrada'],['salida','Salida'],...(canManage()?[['traspaso','Traspaso']]:[])],initial)+'<div id="movement-fields"></div>'}
 

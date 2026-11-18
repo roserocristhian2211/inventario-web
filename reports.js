@@ -4,6 +4,10 @@ export const destinations=[...seq(9),'09B',...seq(20).slice(9),...seq(11).map(x=
 export const familyOf=p=>p.family||(/\bBALANCEADO\b/i.test(p.name)?'balanceado':'insumo');
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const order=(a,b)=>String(a).localeCompare(String(b),'es',{numeric:true});
+export function compareProducts(a,b){
+  return Number(familyOf(b)==='balanceado')-Number(familyOf(a)==='balanceado') ||
+    order(a.name,b.name) || order(a.code,b.code);
+}
 const sum=(rows,fn)=>rows.reduce((total,row)=>total+fn(row),0);
 const stamp=date=>Date.parse(date+'T00:00:00Z')/86400000;
 const delta=m=>m.type==='salida'?-m.q:m.type==='traspaso'?0:m.q;
@@ -14,9 +18,12 @@ function grouped(rows,products,byPlace){
   const totals=new Map();
   for(const m of rows){
     const p=products.get(m.data.pid),dest=place(m),key=JSON.stringify([p.id,dest,m.unit]);
-    const line=totals.get(key)||[p.code,p.name,dest,0,m.unit];line[3]+=m.q;totals.set(key,line);
+    const line=totals.get(key)||{product:p,dest,quantity:0,unit:m.unit};
+    line.quantity+=m.q;totals.set(key,line);
   }
-  return [...totals.values()].sort((a,b)=>byPlace?order(a[2],b[2])||order(a[1],b[1]):order(a[1],b[1])||order(a[2],b[2]));
+  return [...totals.values()].sort((a,b)=>
+    (byPlace?order(a.dest,b.dest):0) || compareProducts(a.product,b.product) || order(a.dest,b.dest)
+  ).map(line=>[line.product.code,line.product.name,line.dest,line.quantity,line.unit]);
 }
 function pounds(p){
   if(p.lbPerSack)return p.lbPerSack;
@@ -24,7 +31,7 @@ function pounds(p){
   return match?Number(match[1].replace(',','.'))*(match[2].toUpperCase()==='KG'?2.20462262:1):null;
 }
 export function buildReport(kind,input,items,movements,anchor){
-  const products=new Map(items.filter(p=>p.cat==='directo').map(p=>[p.id,p]));
+  const products=new Map(items.filter(p=>p.cat==='directo').sort(compareProducts).map(p=>[p.id,p]));
   const moves=movements.filter(m=>products.has(m.data.pid)),out=moves.filter(m=>m.type==='salida');
   const {date,from,to,month,author,today}=input;
   const report={author,notes:[],sections:[]};
@@ -50,7 +57,7 @@ export function buildReport(kind,input,items,movements,anchor){
       const line=totals.get(key)||{p,unit:m.unit,qty:new Map()};
       line.qty.set(place(m),(line.qty.get(place(m))||0)+m.q);totals.set(key,line);
     }
-    const sorted=[...totals.values()].sort((a,b)=>order(familyOf(a.p),familyOf(b.p))||order(a.p.name,b.p.name));
+    const sorted=[...totals.values()].sort((a,b)=>compareProducts(a.p,b.p));
     const extra=[...new Set(day.map(place).filter(d=>!destinations.includes(d)))].sort(order);
     const cols=[...destinations,...extra];
     const head=['PRODUCTO','COD.','UND',...cols.map(d=>d.startsWith('PRE')?d.slice(3):d.replace(/^0/,'')),'TOTAL'];
