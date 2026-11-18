@@ -1,4 +1,5 @@
 const seq=n=>Array.from({length:n},(_,i)=>String(i+1).padStart(2,'0'));
+export const referenceReport={date:'2026-11-17',number:2268};
 export const destinations=[...seq(9),'09B',...seq(20).slice(9),...seq(11).map(x=>'PRE'+x)];
 export const familyOf=p=>p.family||(/\bBALANCEADO\b/i.test(p.name)?'balanceado':'insumo');
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -38,21 +39,24 @@ export function buildReport(kind,input,items,movements,anchor){
   }else if(kind==='daily'){
     if(!date)throw Error('Selecciona una fecha.');
     const day=out.filter(m=>m.date===date);
-    const n=anchor?anchor.number+stamp(date)-stamp(anchor.date):null,serial=n>0?String(n).padStart(3,'0'):'';
-    report.title='Consumo diario'+(serial?' · N.º '+serial:' · Borrador');
-    report.filename='Consumo-diario-'+date+(serial?'-'+serial:'-borrador');
+    const base=anchor||referenceReport,n=base.number+stamp(date)-stamp(base.date);
+    if(!Number.isSafeInteger(n)||n<1)throw Error('La fecha es anterior al inicio de la secuencia.');
+    report.title='Reporte de consumos diarios · N.º '+n;
+    report.filename='Reporte_consumos_diarios_'+date;
     report.notes=['Fecha: '+date+' · Elaborado por: '+author];
-    const lines=grouped(day,products,false),byProd=new Map();
-    for(const [code,name,d,q,unit] of lines){const key=JSON.stringify([code,name,unit]);const row=byProd.get(key)||{code,name,unit,qty:new Map()};row.qty.set(d,q);byProd.set(key,row)}
-    const groups=new Map([...products.values()].map(p=>[p.code,familyOf(p)]));
-    const sorted=[...byProd.values()].sort((a,b)=>order(groups.get(a.code),groups.get(b.code))||order(a.name,b.name));
-    const extra=[...new Set(day.map(place).filter(d=>!destinations.includes(d)))].sort(order);
-    for(const [label,places] of [['Piscinas',destinations.slice(0,21)],['Precrías',destinations.slice(21)],['Otros destinos',extra]]){
-      for(let i=0;i<places.length;i+=11){
-        const cols=places.slice(i,i+11);
-        report.sections.push(section(label+' · '+cols[0]+' a '+cols.at(-1),['Producto','Medida',...cols,'Subtotal'],sorted.map(p=>[p.name,p.unit,...cols.map(d=>p.qty.get(d)||''),sum(cols,d=>p.qty.get(d)||0)])));
-      }
+    const totals=new Map();
+    for(const m of day){
+      const p=products.get(m.data.pid),key=JSON.stringify([p.id,m.unit]);
+      const line=totals.get(key)||{p,unit:m.unit,qty:new Map()};
+      line.qty.set(place(m),(line.qty.get(place(m))||0)+m.q);totals.set(key,line);
     }
+    const sorted=[...totals.values()].sort((a,b)=>order(familyOf(a.p),familyOf(b.p))||order(a.p.name,b.p.name));
+    const extra=[...new Set(day.map(place).filter(d=>!destinations.includes(d)))].sort(order);
+    const cols=[...destinations,...extra];
+    const head=['PRODUCTO','COD.','UND',...cols.map(d=>d.startsWith('PRE')?d.slice(3):d.replace(/^0/,'')),'TOTAL'];
+    const rows=sorted.map(({p,unit,qty})=>[p.name,p.code,unit,...cols.map(d=>qty.get(d)||''),sum(cols,d=>qty.get(d)||0)]);
+    report.daily={number:n,date,extra,signers:[author,input.reviewed||'',input.approved||'',input.received||''],totals:['TOTAL','','',...cols.map((_,i)=>sum(rows,r=>Number(r[i+3]))||''),sum(rows,r=>r.at(-1))]};
+    report.sections.push(section('Piscinas y precriaderos',head,rows));
   }else{
     if(!/^\d{4}-\d{2}$/.test(month)||month>today.slice(0,7))throw Error('Selecciona un mes transcurrido o el actual.');
     const start=month+'-01',end=month===today.slice(0,7)?today:new Date(Date.UTC(+month.slice(0,4),+month.slice(5),0)).toISOString().slice(0,10);
@@ -88,8 +92,8 @@ export function setupReportUI(ctx){
       const dates=(label,key,value,type='date')=>'<label>'+label+'<input type="'+type+'" name="'+key+'" value="'+esc(value)+'"></label>';
       let html='';
       if(kind==='daily'){
-        html=dates('Fecha','date',date)+author;
-        if(ctx.admin()){const a=ctx.anchor();html+='<details><summary>Numeración del reporte</summary><p>Usa un reporte conocido como referencia. El número avanza uno por día calendario.</p>'+dates('Fecha del reporte conocido','anchorDate',a?.date||date)+dates('Número de ese reporte','anchorNumber',a?.number||'','number')+'<button type="button" id="anchor-save" class="small">Guardar referencia</button></details>'}
+        html=dates('Fecha','date',date)+author+'<details><summary>Responsables del reporte</summary>'+[['reviewed','Revisado por · Producción'],['approved','Aprobado por · Administración'],['received','Recibido por · Contabilidad']].map(([key,label])=>'<label>'+label+'<input name="'+key+'" maxlength="64" value="'+esc(localStorage.getItem('iw-report-'+key)||'')+'"></label>').join('')+'</details>';
+        if(ctx.admin()){const a=ctx.anchor()||referenceReport;html+='<details><summary>Numeración del reporte</summary><p>Usa un reporte conocido como referencia. El número avanza uno por día calendario.</p>'+dates('Fecha del reporte conocido','anchorDate',a?.date||date)+dates('Número de ese reporte','anchorNumber',a?.number||'','number')+'<button type="button" id="anchor-save" class="small">Guardar referencia</button></details>'}
       }else if(kind==='kpi')html=dates('Mes','month',month,'month')+author;
       else if(kind==='range'){
         const extra=[...new Set(ctx.moves().filter(m=>m.type==='salida').map(place))].filter(d=>!destinations.includes(d));
@@ -105,7 +109,7 @@ export function setupReportUI(ctx){
       catch(e){$('#report-preview').textContent=e.message;$('#report-pdf').disabled=$('#report-xlsx').disabled=true}
     }
     $('#report-kind').onchange=options;$('#report-options').oninput=preview;
-    for(const [id,fn] of [['#report-pdf','makePDF'],['#report-xlsx','makeExcel']])$(id).onclick=async()=>{try{const report=get();const writer=await import('./report-vendor.js?v=8');await writer[fn](report)}catch(e){ctx.fail(e)}};
+    for(const [id,fn] of [['#report-pdf','makePDF'],['#report-xlsx','makeExcel']])$(id).onclick=async()=>{try{const report=get();if(report.daily){for(const key of ['reviewed','approved','received'])localStorage.setItem('iw-report-'+key,dialog.querySelector('form').elements[key].value)}const writer=await import('./report-vendor.js?v=9');await writer[fn](report)}catch(e){ctx.fail(e)}};
     options();dialog.showModal();
   };
 }

@@ -1,4 +1,4 @@
-import {setupReportUI,familyOf,destinations} from './reports.js?v=8';
+import {setupReportUI,familyOf,destinations} from './reports.js?v=9';
 import {TEAM_API} from './team-config.js?v=6';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];

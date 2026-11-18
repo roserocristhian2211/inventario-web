@@ -1,3 +1,4 @@
+import {dailyPDF} from './daily.js';
 import {jsPDF} from 'jspdf';
 import {autoTable} from 'jspdf-autotable';
 import writeExcel from 'write-excel-file/universal';
@@ -5,6 +6,7 @@ import writeExcel from 'write-excel-file/universal';
 export function makePDF(report){
   const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
   pdf.setProperties({title:report.title,author:report.author||'Inventario Web'});
+  if(report.daily)return dailyPDF(pdf,report);
   let y=17;
   pdf.setFontSize(18);pdf.text(report.title,12,y);y+=8;
   pdf.setFontSize(10);
