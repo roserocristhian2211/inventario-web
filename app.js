@@ -1,4 +1,4 @@
-import {TEAM_API} from './team-config.js';
+import {TEAM_API} from './team-config.js?v=6';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const DB='inventario-web-independiente-v1', GRAPH='https://graph.microsoft.com/v1.0',MARK='identidad-inventario-web.json';
@@ -79,7 +79,26 @@ async function importTeam(file){
   for(let i=0;i<ordered.length;i+=100)await teamCall('/import',{events:ordered.slice(i,i+100)});
   await pullTeam();toast('Respaldo incorporado a la bodega.')
 }
+async function recoverPersonalInventory(){
+  const profile=await j('/me?$select=id');
+  const drive=await j('/me/drive?$select=id');
+  let personal=await openDB();
+  try{
+    const binding=await req(personal.transaction('settings').objectStore('settings').get('binding'));
+    if(!binding || binding.value.driveId!==drive.id){
+      personal.close();
+      personal=await openDB(DB+'-account-'+profile.id);
+    }
+    const transaction=personal.transaction(['events','photos']);
+    const [events,photos]=await Promise.all(['events','photos'].map(name=>req(transaction.objectStore(name).getAll())));
+    if(!events.length)throw Error('No se encontraron registros de esta cuenta en este navegador. Puedes incorporar el respaldo JSON.');
+    const json=JSON.stringify({format:'inventario-web-independent-v1',events,photos});
+    download('respaldo-personal-'+today()+'.json',json,'application/json');
+    await importTeam(new Blob([json]));
+  }finally{personal.close()}
+}
 function setupTeam(){
+  $('#team-recover').onclick=()=>recoverPersonalInventory().catch(fail);
   $('#team-tools').hidden=!canManage();
   for(const el of $$('[data-action="producto"],#import-csv,#name,#save-name')){if(!canManage())(el.closest('label')||el).hidden=true}
   $('#settings-link').addEventListener('click',()=>{if(canManage())listMembers().catch(fail)});
