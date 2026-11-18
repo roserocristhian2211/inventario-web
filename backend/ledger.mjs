@@ -26,18 +26,34 @@ export class Ledger {
     const data={pid,actor:historical&&typeof d.actor==='string'?d.actor.slice(0,254):user.email};
     if(['create','edit'].includes(e.type)){
       Object.assign(data,{code:text('code',35).trim(),name:text('name',160).trim(),unit:text('unit',32),cat:d.cat,min:d.min??0,photo:d.photo??null});
+      if(d.family!==undefined){requireValue(['balanceado','insumo'].includes(d.family),'Grupo inválido.');data.family=d.family}
+      if(d.lbPerSack!=null){requireValue(Number.isFinite(d.lbPerSack)&&d.lbPerSack>0,'Peso de saco inválido.');data.lbPerSack=d.lbPerSack}
       requireValue(data.code&&data.name&&data.unit&&['directo','indirecto'].includes(data.cat)&&Number.isFinite(data.min)&&data.min>=0&&(!data.photo||uuid(data.photo)),'Datos del producto inválidos.');
       requireValue(!this.first('SELECT id FROM products WHERE code=? AND id<>? AND deleted=0',data.code,pid),'El código ya existe.',409);
       if(e.type==='create'){requireValue(!product,'Producto existente.',409);this.sql.exec('INSERT INTO products VALUES(?,?,0,0)',pid,data.code)}
       else {requireValue(product&&!product.deleted,'Producto inactivo.',409);this.sql.exec('UPDATE products SET code=? WHERE id=?',data.code,pid)}
     }else{
       requireValue(product&&!product.deleted,'Producto inexistente o dado de baja.',409);
-      if(e.type==='delete')this.sql.exec('UPDATE products SET deleted=1 WHERE id=?',pid);
+      if(e.type==='anular'){
+        requireValue(uuid(d.target),'Salida inválida.');
+        const original=this.first('SELECT payload FROM events WHERE id=?',d.target);
+        const salida=original&&JSON.parse(original.payload);
+        requireValue(salida?.type==='salida'&&salida.data.pid===pid,'Salida inexistente.',409);
+        requireValue(!this.first("SELECT id FROM events WHERE json_extract(payload,'$.type')='anular' AND json_extract(payload,'$.data.target')=?",d.target),'La salida ya fue anulada.',409);
+        data.target=d.target;
+        const restored=product.stock+Math.round(salida.data.q*1e6);
+        requireValue(Number.isSafeInteger(restored),'Saldo fuera de rango.');
+        this.sql.exec('UPDATE products SET stock=? WHERE id=?',restored,pid);
+      }else if(e.type==='delete')this.sql.exec('UPDATE products SET deleted=1 WHERE id=?',pid);
       else{
         requireValue(move||['ajuste','traspaso'].includes(e.type),'Operación desconocida.');
         const units=Math.round(d.q*1e6);
         requireValue(Number.isFinite(d.q)&&Number.isSafeInteger(units)&&(e.type==='ajuste'||units>0),'Cantidad inválida.');
         Object.assign(data,{q:units/1e6,doc:text('doc',75),origin:text('origin',80),dest:text('dest',80),note:text('note',180)});
+        if(e.type==='entrada'&&d.attachments){
+          requireValue(Array.isArray(d.attachments)&&d.attachments.length<=4&&d.attachments.every(id=>uuid(id)&&this.first('SELECT id FROM photos WHERE id=?',id)),'Fotografía no disponible.');
+          data.attachments=d.attachments;
+        }
         const delta=e.type==='salida'?-units:e.type==='traspaso'?0:units;
         requireValue(Number.isSafeInteger(product.stock+delta),'Saldo fuera de rango.');
         requireValue(historical||product.stock+delta>=0,'Stock insuficiente. Actualiza el inventario.',409);

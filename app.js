@@ -1,3 +1,4 @@
+import {setupReportUI,familyOf,destinations} from './reports.js?v=8';
 import {TEAM_API} from './team-config.js?v=6';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -36,14 +37,15 @@ async function pullTeam(){
       const result=await teamCall('/changes',{after:settings.cursor||0});
       rows=result.rows;
       for(const {event} of rows){
-        if(event.data.photo&&!await one('photos',event.data.photo)){
-          const photo=await teamCall('/photo',{id:event.data.photo});
-          if(photo.data)await put('photos',{id:event.data.photo,data:photo.data,synced:true})
+        for(const id of [event.data.photo,...(event.data.attachments||[])].filter(Boolean))if(!await one('photos',id)){
+          const photo=await teamCall('/photo',{id});
+          if(photo.data)await put('photos',{id,data:photo.data,synced:true})
         }
         if(previousSync&&['entrada','salida'].includes(event.type)&&!await one('events',event.id))incoming.push(event);
         await put('events',event)
       }
       if(rows.length)await setting('cursor',rows.at(-1).seq);
+      if(result.anchor)await setting('reportAnchor',JSON.parse(result.anchor));
       if(result.name)await setting('name',result.name);
     }while(rows.length===200);
     await setting('lastSync',new Date().toISOString());await reload();
@@ -123,11 +125,12 @@ function dateLabel(s){return String(s||'').slice(0,10)}
 function record(type,data){data={...data,actor:session.profile.label};return {id:uid(),type,date:today(),ts:new Date().toISOString(),data,synced:false}}
 async function saveEvent(type,data){await commitEvent(record(type,data));await reload()}
 function compute(){let p=new Map();moves=[];alerts=[];let sorted=[...events].sort((a,b)=>Number(b.type==='create')-Number(a.type==='create')||String(a.ts).localeCompare(String(b.ts))||String(a.id).localeCompare(String(b.id)));
-for(const e of sorted){let d=e.data||{},x=p.get(d.pid);
-if(e.type==='create'){if(p.has(d.pid)){alerts.push('Producto duplicado');continue}p.set(d.pid,{id:d.pid,code:d.code,name:d.name,unit:d.unit,cat:d.cat,min:d.min||0,photo:d.photo||null,stock:0,deleted:false});continue}
+const voided=new Set(events.filter(e=>e.type==='anular').map(e=>e.data.target));
+for(const e of sorted){if(voided.has(e.id))continue;let d=e.data||{},x=p.get(d.pid);
+if(e.type==='create'){if(p.has(d.pid)){alerts.push('Producto duplicado');continue}p.set(d.pid,{created:e.date,id:d.pid,code:d.code,name:d.name,unit:d.unit,cat:d.cat,family:d.family,lbPerSack:d.lbPerSack,min:d.min||0,photo:d.photo||null,stock:0,deleted:false});continue}
 if(!x){alerts.push('Movimiento sin producto: '+e.id);continue}
-if(e.type==='edit'){Object.assign(x,{code:d.code,name:d.name,unit:d.unit,cat:d.cat,min:d.min||0,photo:d.photo||null});continue}
-if(e.type==='delete'){x.deleted=true;continue}
+if(e.type==='edit'){Object.assign(x,{code:d.code,name:d.name,unit:d.unit,cat:d.cat,family:d.family,lbPerSack:d.lbPerSack,min:d.min||0,photo:d.photo||null});continue}
+if(e.type==='delete'){x.deleted=true;x.removed=e.date;continue}
 if(['entrada','salida','ajuste','traspaso'].includes(e.type)){let q=Number(d.q);if(!Number.isFinite(q)||(e.type!=='ajuste'&&q<=0)){alerts.push('Cantidad incorrecta: '+e.id);continue}if(e.type==='entrada')x.stock+=q;if(e.type==='salida')x.stock-=q;if(e.type==='ajuste')x.stock+=q;moves.push({...e,prod:x.name,code:x.code,unit:x.unit,q})}
 }
 inventory=[...p.values()].sort((a,b)=>a.name.localeCompare(b.name,'es'));moves.reverse();
@@ -137,14 +140,14 @@ function active(){return inventory.filter(p=>!p.deleted&&p.cat==='directo')}
 const pic=id=>photos.find(x=>x.id===id)?.data||'';
 function productRow(p,actions){let state=p.stock<=0?'<span class="tag danger">Agotado</span>':p.min>0&&p.stock<p.min?'<span class="tag warning">Bajo mínimo</span>':'<span class="tag">Disponible</span>';if(actions&&!canManage())return productRow(p,false).replace('</h3>','</h3><button class="small" data-move="'+esc(p.id)+'">Movimiento</button>');let buttons=actions?'<div class="item-buttons"><button data-edit="'+esc(p.id)+'">Editar</button><button data-move="'+esc(p.id)+'">Movimiento</button><button class="danger" data-delete="'+esc(p.id)+'">Eliminar</button></div>':'';return '<div class="item">'+(p.photo?'<img class="thumb" src="'+esc(pic(p.photo))+'" alt="Foto del producto">':'')+'<div class="item-body"><h3>'+esc(p.name)+'</h3><p>'+esc(p.code)+' · '+esc(p.unit)+' · '+'Material directo'+'</p>'+buttons+'</div><div class="quantity"><strong>'+fmt(p.stock)+'</strong><small>'+esc(p.unit)+'</small>'+state+'</div></div>'}
 function empty(t){return '<div class="empty">'+esc(t)+'</div>'}
-function moveRow(m){let q=m.type==='salida'?'-':m.type==='entrada'?'+':m.type==='ajuste'&&m.q>=0?'+':'';return '<div class="item"><div class="item-body"><h3>'+esc(m.prod)+'</h3><p>'+esc(m.date)+(m.data.actor?' · '+esc(m.data.actor):'')+' · '+esc(m.data.doc||'Sin documento')+' · '+esc(m.data.origin||'')+(m.data.dest?' → '+esc(m.data.dest):'')+'</p><span class="tag">'+esc(m.type.toUpperCase())+'</span></div><div class="quantity"><strong>'+q+fmt(m.q)+'</strong><small>'+esc(m.unit)+'</small></div></div>'}
+function moveRow(m){const controls=(m.type==='salida'&&canManage()?'<button class="small danger" data-void="'+esc(m.id)+'">Eliminar salida</button>':'')+(m.data.attachments||[]).map((id,i)=>'<button class="small" data-picture="'+esc(id)+'">Foto '+(i+1)+'</button>').join('');let q=m.type==='salida'?'-':m.type==='entrada'?'+':m.type==='ajuste'&&m.q>=0?'+':'';return '<div class="item"><div class="item-body"><h3>'+esc(m.prod)+'</h3><p>'+esc(m.date)+(m.data.actor?' · '+esc(m.data.actor):'')+' · '+esc(m.data.doc||'Sin documento')+' · '+esc(m.data.origin||'')+(m.data.dest?' → '+esc(m.data.dest):'')+'</p><span class="tag">'+esc(m.type.toUpperCase())+'</span>'+controls+'</div><div class="quantity"><strong>'+q+fmt(m.q)+'</strong><small>'+esc(m.unit)+'</small></div></div>'}
 function render(){if(!session?.profile)return;let pp=active(),todayN=moves.filter(m=>m.date===today()&&inventory.find(x=>x.id===m.data.pid)?.cat==='directo').length;
 $('#n-products').textContent=pp.length;$('#n-out').textContent=pp.filter(p=>p.stock<=0).length;$('#n-low').textContent=pp.filter(p=>p.min>0&&p.stock>0&&p.stock<p.min).length;$('#n-today').textContent=todayN;
 $('#attention').innerHTML=pp.filter(p=>p.stock<=0||(p.min>0&&p.stock<p.min)).map(p=>productRow(p,false)).join('')||empty('No hay productos con alertas.');
 let term=$('#find-product').value.toLowerCase();
 $('#products').innerHTML=active().filter(p=>($('#stock-filter').value!=='alert'||p.stock<=0||p.stock<p.min)&&(p.name.toLowerCase().includes(term)||p.code.toLowerCase().includes(term))).map(p=>productRow(p,true)).join('')||empty('No hay productos. Puedes agregar uno nuevo.');
 let query=$('#find-move').value.toLowerCase(),type=$('#filter-type').value;
-$('#moves').innerHTML=moves.filter(m=>inventory.find(p=>p.id===m.data.pid)?.cat==='directo'&&(type==='todos'||type===m.type)&&[m.prod,m.code,m.data.doc,m.data.origin,m.data.dest,m.date].some(v=>String(v||'').toLowerCase().includes(query))).slice(0,600).map(moveRow).join('')||empty('No hay movimientos registrados.');
+$('#moves').innerHTML=moves.filter(m=>inventory.find(p=>p.id===m.data.pid)?.cat==='directo'&&(!$('#moves-from').value||m.date>=$('#moves-from').value)&&(!$('#moves-to').value||m.date<=$('#moves-to').value)&&(type==='todos'||type===m.type)&&[m.prod,m.code,m.data.doc,m.data.origin,m.data.dest,m.date].some(v=>String(v||'').toLowerCase().includes(query))).slice(0,600).map(moveRow).join('')||empty('No hay movimientos registrados.');
 $('#counts').innerHTML=active().map(p=>'<div class="item"><div class="item-body"><h3>'+esc(p.name)+'</h3><p>'+esc(p.code)+' · '+esc(p.unit)+'</p></div><div class="quantity"><strong>'+fmt(p.stock)+'</strong><button class="small" data-count="'+esc(p.id)+'">Contar</button></div></div>').join('')||empty('Registra productos para hacer un conteo.');
 $('#appname').textContent=settings.name && settings.name!=='Inventario Web'?settings.name:'Inventario camaronera';
 $('#display-date').textContent=new Intl.DateTimeFormat('es-EC',{dateStyle:'full'}).format(new Date());
@@ -167,15 +170,22 @@ function show(id){page=id;window.scrollTo(0,0);$$('.page').forEach(el=>el.classL
 const field=(lab,name,val='',type='text',extra='')=>'<label>'+lab+'<input name="'+name+'" type="'+type+'" value="'+esc(val)+'" '+extra+'></label>';
 const select=(lab,name,opts,selected)=>'<label>'+lab+'<select name="'+name+'">'+opts.map(([v,t])=>'<option value="'+esc(v)+'" '+(v===selected?'selected':'')+'>'+esc(t)+'</option>').join('')+'</select></label>';
 function openEditor(kind,pid=null,initial='entrada'){let p=inventory.find(x=>x.id===pid);editor={kind,pid,expected:p?.stock};let h='';
-if(kind==='producto'){$('#modal-title').textContent=p?'Editar producto':'Nuevo producto';h+=field('Código','code',p?.code||'','text','required maxlength="35"')+field('Descripción','name',p?.name||'','text','required maxlength="160"');h+=select('Unidad','unit',['SC','KG','LT','UND','CJ','PZ','GL','M'].map(x=>[x,x]),p?.unit||'UND');h+=field('Existencia mínima','min',p?.min??0,'number','required min="0" step="any"');h+='<label>Fotografía (opcional)<input type="file" name="picture" accept="image/jpeg,image/png,image/webp"></label>'}
-if(kind==='movimiento'){if(!active().length){toast('Primero agrega un producto.',true);return}$('#modal-title').textContent='Registrar movimiento';h+=select('Tipo de movimiento','type',[['entrada','Entrada de mercadería'],['salida','Salida de mercadería'],['traspaso','Traspaso entre piscinas']],initial);h+=select('Producto','pid',active().map(x=>[x.id,x.code+' · '+x.name+' ('+fmt(x.stock)+' '+x.unit+')']),pid||active()[0].id);h+=field('Cantidad','q','','number','required min="0.000001" step="any"')+field('Fecha','date',today(),'date','required')+field('Documento/guía','doc','','text','maxlength="75"')+field('Origen','origin','','text','maxlength="80"')+field('Destino/piscina','dest','','text','maxlength="80"')+field('Observaciones','note','','text','maxlength="180"');h+='<p class="subtle">Un traspaso entre piscinas no resta mercadería de bodega. Para registrar consumo usa Salida.</p>'}
+if(kind==='producto'){$('#modal-title').textContent=p?'Editar producto':'Nuevo producto';h+=field('Código','code',p?.code||'','text','required maxlength="35"')+field('Descripción','name',p?.name||'','text','required maxlength="160"');h+=select('Medida','unit',[...new Set(['SC','KG','LT','UND','CJ','PZ','GL','M',...(p?[p.unit]:[])])].map(x=>[x,x]),p?.unit||'SC');
+h+=select('Grupo','family',[['insumo','Insumo'],['balanceado','Balanceado']],p?familyOf(p):'insumo')+field('Libras por saco de balanceado (opcional)','lbs',p?.lbPerSack||'','number','min="0.000001" step="any"');
+if(!p)h+=field('Inventario inicial','opening',0,'number','required min="0" step="any"');h+=field('Existencia mínima','min',p?.min??0,'number','required min="0" step="any"');h+='<label>Fotografía (opcional)<input type="file" name="picture" accept="image/jpeg,image/png,image/webp"></label>'}
+if(kind==='movimiento'){if(!active().length){toast('Primero agrega un producto.',true);return}$('#modal-title').textContent='Registrar movimiento';h+=select('Tipo de movimiento','type',[['entrada','Entrada'],['salida','Salida'],...(canManage()?[['traspaso','Traspaso']]:[])],initial)+'<div id="movement-fields"></div>'}
+
 if(kind==='conteo'){if(!p)return;$('#modal-title').textContent='Conteo físico';h+='<div class="note">'+esc(p.name)+' · Existencia: '+fmt(p.stock)+' '+esc(p.unit)+'</div>'+field('Cantidad encontrada','q',p.stock,'number','required min="0" step="any"')+field('Observación','note','Conteo físico','text','maxlength="180"')}
-$('#fields').innerHTML=h;$('#modal').showModal()}
+$('#fields').innerHTML=h;if(kind==='movimiento'){drawMovement(initial,pid);$('#fields select[name="type"]').onchange=e=>drawMovement(e.target.value,pid)}$('#modal').showModal()}
 async function imageData(file){if(file.size>10*1024*1024)throw Error('Imagen demasiado grande (máximo 10 MB).');if(!['image/png','image/jpeg','image/webp'].includes(file.type))throw Error('Formato de imagen inválido.');let bitmap=await createImageBitmap(file);let scale=Math.min(1,1200/Math.max(bitmap.width,bitmap.height));let can=document.createElement('canvas');can.width=Math.round(bitmap.width*scale);can.height=Math.round(bitmap.height*scale);can.getContext('2d').drawImage(bitmap,0,0,can.width,can.height);bitmap.close();return can.toDataURL('image/jpeg',.75)}
 async function submitEditor(e){e.preventDefault();const submit=e.target.querySelector('[type=submit]');if(submit.disabled)return;submit.disabled=true;try{const f=new FormData(e.target),v=k=>String(f.get(k)||'').trim(),kind=editor.kind,pid=editor.pid;
 if(kind==='producto'){let code=v('code'),name=v('name'),min=number(v('min'));if(!code||!name||min<0)throw Error('Completa el producto y el mínimo válido.');if(active().some(p=>p.id!==pid&&p.code.toLowerCase()===code.toLowerCase()))throw Error('Este código ya existe.');let prev=inventory.find(p=>p.id===pid),photo=prev?.photo||null,attached=f.get('picture');if(attached instanceof File&&attached.size){photo=uid();await put('photos',{id:photo,data:await imageData(attached),synced:false})}
-await saveEvent(pid?'edit':'create',{pid:pid||uid(),code,name,min,cat:'directo',unit:v('unit'),photo})}
-if(kind==='movimiento'){let x=active().find(p=>p.id===v('pid')),type=v('type'),q=number(v('q'));if(!x||q<=0)throw Error('Selecciona producto y cantidad válida.');if(type==='salida'&&q>x.stock)throw Error('Stock insuficiente para esta salida.');if(type==='traspaso'&&(!v('origin')||!v('dest')||v('origin')===v('dest')))throw Error('Indica piscinas de origen y destino distintas.');let ev=record(type,{pid:x.id,q,doc:v('doc'),origin:v('origin'),dest:v('dest'),note:v('note')});ev.date=v('date')||today();if(TEAM_API){const key=JSON.stringify([ev.type,ev.data,ev.date]);if(editor.submission?.key===key)ev.id=editor.submission.id;else editor.submission={key,id:ev.id}}await commitEvent(ev);await reload();if(['entrada','salida'].includes(type))notifyMove(ev,x)}
+const productId=pid||(editor.productId||=uid()),data={pid:productId,code,name,min,cat:'directo',family:v('family'),lbPerSack:v('lbs')?number(v('lbs')):null,unit:v('unit'),photo};
+if(photo&&TEAM_API){const obj=await one('photos',photo);if(obj&&!obj.synced){await teamCall('/photo-save',obj);await put('photos',{...obj,synced:true})}}
+const batch=[record(pid?'edit':'create',data)],opening=number(v('opening'));
+if(!pid&&opening>0)batch.push(record('ajuste',{pid:productId,q:opening,expected:0,doc:'INVENTARIO INICIAL'}));
+await saveBatch(batch);await reload()}
+if(kind==='movimiento'){await submitMovement(f);await reload()}
 if(kind==='conteo'){let p=active().find(x=>x.id===pid),q=number(v('q'));if(!p||q<0)throw Error('La cantidad no puede ser negativa.');await saveEvent('ajuste',{pid,q:q-(TEAM_API?editor.expected:p.stock),expected:editor.expected,note:v('note'),doc:'CONTEO'})}
 $('#modal').close();if(kind!=='movimiento'||v('type')==='traspaso')toast(TEAM_API?'Registro confirmado en la bodega.':'Registro guardado en este dispositivo.');scheduleSync()}catch(err){fail(err)}finally{submit.disabled=false}}
 async function exportJSON(){let json=JSON.stringify({format:'inventario-web-independent-v1',fecha:new Date().toISOString(),events,photos},null,2);download('respaldo-inventario-'+today()+'.json',json,'application/json')}
@@ -231,16 +241,9 @@ await setting('binding',{driveId:drive.id,folder});
 let remote=await children(evFolder.id),ids=new Set();let received=0,sent=0;const newMoves=[];for(const f of remote){if(!/^[0-9a-f-]{36}\.json$/i.test(f.name))continue;let id=f.name.slice(0,-5);ids.add(id);let x=await one('events',id);if(x){if(!x.synced)await put('events',{...x,synced:true});continue}let content=await (await graph('/me/drive/items/'+enc(f.id)+'/content')).json();if(!content.event||content.event.id!==id)throw Error('Movimiento remoto inválido');await put('events',{...content.event,synced:true});received++;if(['entrada','salida'].includes(content.event.type))newMoves.push(content.event)}
 let local=await all('events'),remotePhotos=await children(phFolder.id),names=new Set(remotePhotos.map(x=>x.name));
 for(const e of local){if(ids.has(e.id))continue;await up(evFolder.id,e.id+'.json',JSON.stringify({event:{id:e.id,type:e.type,ts:e.ts,date:e.date,data:e.data}}),'application/json');await put('events',{...e,synced:true});sent++}
-const references=new Set(local.filter(x=>['create','edit'].includes(x.type)).map(x=>x.data.photo).filter(Boolean));let localPhotos=await all('photos');for(const p of localPhotos){if(!references.has(p.id))continue;if(names.has(p.id+'.jpg'))continue;let res=await fetch(p.data),blob=await res.blob();await up(phFolder.id,p.id+'.jpg',blob,'image/jpeg');await put('photos',{...p,synced:true})}
+const references=new Set(local.flatMap(x=>[x.data.photo,...(x.data.attachments||[])]).filter(Boolean));let localPhotos=await all('photos');for(const p of localPhotos){if(!references.has(p.id))continue;if(names.has(p.id+'.jpg'))continue;let res=await fetch(p.data),blob=await res.blob();await up(phFolder.id,p.id+'.jpg',blob,'image/jpeg');await put('photos',{...p,synced:true})}
 for(const p of remotePhotos){if(!/^[0-9a-f-]{36}\.jpg$/i.test(p.name))continue;let id=p.name.slice(0,-4);if(!references.has(id)||await one('photos',id))continue;let resp=await graph('/me/drive/items/'+enc(p.id)+'/content'),blob=await resp.blob(),data=await new Promise((yes,no)=>{let r=new FileReader();r.onload=()=>yes(r.result);r.onerror=()=>no(r.error);r.readAsDataURL(blob)});await put('photos',{id,data,synced:true})}
 const previousSync=settings.lastSync;await setting('lastSync',new Date().toISOString());await reload();toast('Sincronización completa: '+received+' recibidos, '+sent+' publicados.');if(previousSync)for(const event of newMoves){const product=active().find(p=>p.id===event.data.pid);if(product)notifyMove(event,product)}}finally{busy=false;render()}}
-function prepareReport(){
-  const date=$('#report-date').value;
-  const rows=moves.filter(m=>m.type==='salida'&&m.date===date&&inventory.some(p=>p.id===m.data.pid&&p.cat==='directo'));
-  $('#report-count').textContent=rows.length+' salidas registradas';
-  $('#print-report').disabled=!rows.length;
-  $('#print-area').innerHTML='<h1>Reporte de salidas</h1><p>'+esc(date)+'</p><table><thead><tr><th>Producto</th><th>Cantidad</th><th>Destino</th><th>Documento</th></tr></thead><tbody>'+rows.map(m=>'<tr><td>'+esc(m.code)+' · '+esc(m.prod)+'</td><td>'+fmt(m.q)+' '+esc(m.unit)+'</td><td>'+esc(m.data.dest)+'</td><td>'+esc(m.data.doc)+'</td></tr>').join('')+'</tbody></table>';
-}
 function setup(){
   // This display is informational. The Worker independently verifies the signature and subject.
   try{
@@ -252,12 +255,17 @@ function setup(){
   $('#settings-link').onclick=()=>show('ajustes');
   $('#view-attention').onclick=()=>{$('#stock-filter').value='alert';$('#find-product').value='';show('productos')};
   $('#stock-filter').onchange=render;
-  $('#report-open').onclick=()=>{$('#report-date').value=today();prepareReport();$('#report-dialog').showModal()};
-  $('#report-date').oninput=prepareReport;
-  $('#print-report').onclick=()=>{$('#report-dialog').close();window.print()};
+  setupReportUI({$,today,inventory:()=>inventory,moves:()=>moves,anchor:()=>settings.reportAnchor,admin:canManage,fail,saveAnchor:async anchor=>{if(TEAM_API)await teamCall('/report-anchor',anchor);await setting('reportAnchor',anchor)}});
+  document.addEventListener('click',async e=>{
+    const id=e.target.closest('[data-void]')?.dataset.void, photo=e.target.closest('[data-picture]')?.dataset.picture;
+    try{
+      if(photo){const file=await one('photos',photo)||(TEAM_API&&await teamCall('/photo',{id:photo}));if(!file?.data)throw Error('Foto no disponible.');$('#evidence-img').src=file.data;$('#evidence').showModal()}
+      if(id&&canManage()){const m=moves.find(x=>x.id===id);if(m&&confirm('¿Eliminar la salida de '+fmt(m.q)+' '+m.unit+' de '+m.prod+' del '+m.date+'? La cantidad volverá a bodega.')){await saveEvent('anular',{pid:m.data.pid,target:id});toast('Salida anulada y saldo restituido.')}}
+    }catch(err){fail(err)}
+  });
  $$('.navitem').forEach(x=>x.onclick=()=>show(x.dataset.page));$$('[data-action]').forEach(x=>x.onclick=()=>openEditor(x.dataset.action));$('#editor').addEventListener('submit',submitEditor);$('#close').onclick=$('#cancel').onclick=()=>$('#modal').close();
 document.addEventListener('click',async e=>{let t=e.target.closest('[data-edit],[data-move],[data-delete],[data-count]');if(!t)return;try{if(t.dataset.edit)openEditor('producto',t.dataset.edit);if(t.dataset.move)openEditor('movimiento',t.dataset.move);if(t.dataset.count)openEditor('conteo',t.dataset.count);if(t.dataset.delete){let p=inventory.find(x=>x.id===t.dataset.delete);if(p&&confirm('¿Dar de baja el producto '+p.name+'? Sus movimientos se conservarán.'))await saveEvent('delete',{pid:p.id})}}catch(err){fail(err)}});
-['#find-product','#find-move','#filter-type'].forEach(s=>$(s).addEventListener('input',render));
+['#find-product','#find-move','#filter-type','#moves-from','#moves-to'].forEach(s=>$(s).addEventListener('input',render));
 $('#save-name').onclick=async()=>{try{if(TEAM_API)await teamCall('/name',{name:$('#name').value.trim()||'Inventario Web'});await setting('name',$('#name').value.trim()||'Inventario Web');render();toast('Nombre guardado')}catch(error){fail(error)}};
 $('#export-json').onclick=exportJSON;$('#export-csv').onclick=exportCSV;
 $('#import-csv').onchange=async e=>{try{if(e.target.files[0])await importCSV(e.target.files[0])}catch(err){fail(err)}e.target.value=''};
@@ -339,3 +347,50 @@ async function main(){
   finally{$('#sign-in').disabled=false}
 }
 main().catch(fail);
+
+async function saveBatch(batch){
+  const key=JSON.stringify(batch.map(e=>[e.type,e.date,e.data]));
+  if(editor.batch?.key===key)batch=editor.batch.events;
+  else editor.batch={key,events:batch};
+  const saved=TEAM_API?(await teamCall('/batch',{events:batch})).events:batch;
+  await store('events','readwrite',s=>Promise.all(saved.map(e=>req(s.put(e)))));
+}
+function drawMovement(type,pid){
+  const area=$('#movement-fields'),list=active(),selected=list.find(x=>x.id===pid);
+  const options=list.map(p=>'<option value="'+esc(p.code+' · '+p.name)+'"></option>').join('');
+  const product=(pre)=>'<label>Producto<input list="catalog-options" name="product" placeholder="Buscar por nombre o código" value="'+esc(pre?pre.code+' · '+pre.name:'')+'" required></label>';
+  const quantity=()=>field('Cantidad','q','','number','min="0.000001" step="any" required');
+  area.innerHTML='<datalist id="catalog-options">'+options+'</datalist>'+field('Fecha','date',today(),'date','required');
+  if(type==='entrada'){
+    area.insertAdjacentHTML('beforeend',field('Número de documento (guía o factura)','doc','','text','maxlength="75"')+'<div id="entry-lines"></div><button type="button" id="add-line" class="small">+ Agregar otro producto</button><label>Tomar foto<input type="file" accept="image/*" capture="environment" name="camera"></label><label>Galería (hasta 4 fotos en total)<input type="file" accept="image/jpeg,image/png,image/webp" multiple name="gallery"></label>');
+    const add=()=>{const rows=$('#entry-lines');if(rows.children.length>=100)return;const row=document.createElement('fieldset');row.innerHTML=product(rows.children.length?null:selected)+quantity()+'<button type="button" class="small">Quitar</button>';rows.append(row);row.querySelector('button').onclick=()=>{if(rows.children.length>1)row.remove();$('#add-line').disabled=false};$('#add-line').disabled=rows.children.length>=100};
+    $('#add-line').onclick=add;add();
+  }else{
+    area.insertAdjacentHTML('beforeend',product(selected)+quantity()+(type==='traspaso'?field('Origen','origin','','text','required maxlength="80"'):'')+'<fieldset><legend>Destino obligatorio</legend>'+['Piscinas','Precrías'].map((label,i)=>'<strong>'+label+'</strong><div class="ponds">'+destinations.filter(x=>x.startsWith('PRE')===!!i).map(d=>'<label><input type="radio" name="dest" value="'+d+'" required><span>'+d+'</span></label>').join('')+'</div>').join('')+'</fieldset><p id="balance-preview" class="note"></p>');
+    const preview=()=>{const p=findProduct(area.querySelector('[name=product]').value),q=Number(area.querySelector('[name=q]').value);$('#balance-preview').textContent=p?'Stock actual: '+fmt(p.stock)+' '+p.unit+(type==='salida'&&q>0?' · Quedará en '+fmt(p.stock-q)+' '+p.unit:''):''};
+    area.oninput=preview;preview();
+  }
+  if(type==='entrada')area.oninput=null;
+  area.insertAdjacentHTML('beforeend',field('Observaciones','note','','text','maxlength="180"'));
+}
+function findProduct(value){return active().find(p=>[p.code,p.code+' · '+p.name].some(s=>s.toLowerCase()===value.trim().toLowerCase()))}
+async function submitMovement(form){
+  const val=k=>String(form.get(k)||'').trim(),type=val('type'),quantities=form.getAll('q');
+  const batch=form.getAll('product').map((value,i)=>{
+    const p=findProduct(value),q=Number(quantities[i]);if(!p||!Number.isFinite(q)||q<=0)throw Error('Selecciona un producto del catálogo y una cantidad positiva.');
+    if(type==='salida'&&q>p.stock)throw Error('Stock insuficiente para '+p.name);
+    if(type!=='entrada'&&!destinations.includes(val('dest')))throw Error('Selecciona una piscina o precría.');
+    if(type==='traspaso'&&val('origin')===val('dest'))throw Error('Selecciona destinos distintos.');
+    const e=record(type,{pid:p.id,q,doc:val('doc'),origin:val('origin'),dest:val('dest'),note:val('note')});e.date=val('date');return e;
+  });
+  const files=[...form.getAll('camera'),...form.getAll('gallery')].filter(f=>f?.size);
+  if(files.length>4)throw Error('Selecciona hasta cuatro fotos.');
+  const ids=[];editor.fileIds??=new Map();
+  for(const file of files){
+    const key=[file.name,file.size,file.lastModified].join('/');let id=editor.fileIds.get(key);
+    if(!id){id=uid();const data=await imageData(file);if(TEAM_API)await teamCall('/attachment',{id,data});await put('photos',{id,data,synced:!!TEAM_API});editor.fileIds.set(key,id)}ids.push(id);
+  }
+  if(ids.length)for(const e of batch)e.data.attachments=ids;
+  await saveBatch(batch);
+  if(type!=='traspaso')notifyMove(batch[0],active().find(p=>p.id===batch[0].data.pid));
+}

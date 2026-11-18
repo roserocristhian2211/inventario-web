@@ -19,12 +19,21 @@ jobs:
     steps:
       - name: Descargar código
         uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Preparar aplicación y exportación de reportes
+        run: |
+          npm ci --prefix report-tools
+          mkdir public
+          cp index.html app.js reports.js team-config.js styles.css manifest.webmanifest icon.svg sw.js public/
+          report-tools/node_modules/.bin/esbuild report-tools/export.js --bundle --format=esm --minify --outfile=public/report-vendor.js
       - name: Preparar Pages
         uses: actions/configure-pages@v5
       - name: Empaquetar sitio
         uses: actions/upload-pages-artifact@v4
         with:
-          path: .
+          path: public
       - name: Publicar sitio
         id: deployment
         uses: actions/deploy-pages@v4

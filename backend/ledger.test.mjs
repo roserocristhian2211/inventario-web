@@ -44,3 +44,18 @@ test('alta por invitación, revocación inmediata y administrador único',async(
  assert.equal((await call('changes','member',address)).status,403);
  assert.equal((await call('me',owner,'owner@example.test')).status,200)
 });
+
+test('anular salida restituye el saldo una sola vez y requiere administrador',()=>{
+ const db=new DatabaseSync(':memory:');
+ const ledger=new Ledger({exec(query,...args){const q=db.prepare(query);return q.columns().length?q.all(...args):(q.run(...args),[])}});
+ const pid=randomUUID(),admin={subject:'owner',email:'owner@example.test',role:'admin'};
+ const event=(type,data)=>({type,id:randomUUID(),date:'2026-11-18',data:{pid,...data}});
+ ledger.append(event('create',{name:'Zeolita',code:'Z1',unit:'SC',cat:'directo'}),admin);
+ ledger.append(event('entrada',{q:20}),admin);
+ const out=ledger.append(event('salida',{q:8,dest:'09B'}),admin);
+ const cancel=event('anular',{target:out.id});
+ assert.throws(()=>ledger.append(cancel,{...admin,role:'operador'}),/administrador/);
+ ledger.append(cancel,admin);ledger.append(cancel,admin);
+ assert.throws(()=>ledger.append({...cancel,id:randomUUID()},admin),/ya fue anulada/);
+ assert.equal(ledger.first('SELECT stock FROM products').stock,20e6);
+});

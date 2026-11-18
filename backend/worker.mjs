@@ -69,11 +69,23 @@ export class Bodega {
         if(path==='/me'||path==='/join')return user;
         if(path==='/changes'){
           const rows=[...sql.exec('SELECT seq,payload FROM events WHERE seq>? ORDER BY seq LIMIT 200',Number(body.after)||0)];
-          return {rows:rows.map(r=>({seq:r.seq,event:JSON.parse(r.payload)})),name:db.first("SELECT value FROM config WHERE key='name'")?.value};
+          return {anchor:db.first("SELECT value FROM config WHERE key='anchor'")?.value,rows:rows.map(r=>({seq:r.seq,event:JSON.parse(r.payload)})),name:db.first("SELECT value FROM config WHERE key='name'")?.value};
         }
         if(path==='/photo'){return db.first('SELECT data FROM photos WHERE id=?',String(body.id))||{}}
         if(path==='/event')return db.append(body,user);
+        if(path==='/batch'){
+          requireValue(Array.isArray(body.events)&&body.events.length>0&&body.events.length<=100,'Lote inválido.');
+          return {events:body.events.map(e=>db.append(e,user))};
+        }
+        if(path==='/attachment'){
+          requireValue(uuid(body.id)&&typeof body.data==='string'&&/^data:image\/jpeg;base64,[a-zA-Z0-9+/=]+$/.test(body.data),'Fotografía inválida.');
+          sql.exec('INSERT OR IGNORE INTO photos VALUES(?,?)',body.id,body.data);return {};
+        }
         requireValue(admin,'Acceso exclusivo del administrador.',403);
+        if(path==='/report-anchor'){
+          requireValue(/^\d{4}-\d{2}-\d{2}$/.test(body.date)&&Number.isSafeInteger(body.number)&&body.number>0,'Referencia inválida.');
+          sql.exec('INSERT OR REPLACE INTO config VALUES(?,?)','anchor',JSON.stringify({date:body.date,number:body.number}));return {};
+        }
         if(path==='/name'){requireValue(typeof body.name==='string'&&body.name.length<=60,'Nombre inválido.');sql.exec('INSERT OR REPLACE INTO config VALUES(?,?)','name',body.name);return {}}
         if(path==='/photo-save'){requireValue(uuid(body.id)&&/^data:image\/jpeg;base64,[a-zA-Z0-9+/=]+$/.test(body.data),'Fotografía inválida.');sql.exec('INSERT OR IGNORE INTO photos VALUES(?,?)',body.id,body.data);return {}}
         if(path==='/import'){requireValue(Array.isArray(body.events)&&body.events.length<=100,'Lote inválido.');for(const e of body.events)db.append(e,user,true);return {}}

@@ -44,6 +44,7 @@ export function reconcileWorkbook(bytes,events,linked){
   const save=(name,doc)=>{parts[name]=strToU8(xml(doc))};
   const strings=nodes(read('xl/sharedStrings.xml'),'si').map(n=>nodes(n,'t').map(t=>t.textContent).join(''));
   const catalog=new Map(), byId=new Map(), byCode=new Map(), byName=new Map();
+  const voided=new Set(events.filter(e=>e.type==="anular").map(e=>e.data.target));
   for(const e of events){
     if(e.type==='create'||e.type==='edit')catalog.set(e.data.pid,e.data);
     if(e.type==='delete')catalog.delete(e.data.pid);
@@ -81,6 +82,7 @@ export function reconcileWorkbook(bytes,events,linked){
       const n=+row.getAttribute('r');if(n<=3||n>end)continue;
       const v=cellValues(row,strings);
       if(!v.F||+v.F===0){
+        if(v.G&&voided.has(v.G)&&kind==='salida')continue;
         check(!v.G,'Una fila vinculada fue vaciada: '+name+' '+n);
         if(!v.A&&!v.B&&!(kind==='entrada'?v.D:v.C))empty.push(row);
         continue;
@@ -92,6 +94,10 @@ export function reconcileWorkbook(bytes,events,linked){
       let id=v.G;
       if(!id){const candidates=legacy.get(signature(movement));id=candidates?.pop()||crypto.randomUUID();setCell(row,'G',id);sheetDirty=true}
       check(uuid(id)&&!seen.has(id),'IdMovimiento repetido o inválido en '+name);
+      if(voided.has(id)){
+        check(kind==='salida'&&byId.has(id)&&signature(movement)===signature(fields(byId.get(id))),'Salida anulada con cambios en BASE');
+        setCell(row,'F',0,{numeric:true});sheetDirty=true;continue;
+      }
       seen.add(id);const previous=byId.get(id);
       if(!previous||signature(movement)!==signature(fields(previous))){
         check(!previous||linked.has(id),'No se pudo conciliar el historial inicial');
@@ -100,7 +106,7 @@ export function reconcileWorkbook(bytes,events,linked){
       }
     }
     for(const [id,e] of byId){
-      if(e.type!==kind||seen.has(id))continue;
+      if(voided.has(id)||e.type!==kind||seen.has(id))continue;
       check(!linked.has(id)&&e.data.actor!=='Historial BASE','Falta una fila histórica o vinculada en '+name);
       const row=empty.shift(),product=catalog.get(e.data.pid);check(row&&product,'Revisa catálogo o amplía la tabla '+name);
       const m=fields(e);
