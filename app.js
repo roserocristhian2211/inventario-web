@@ -37,11 +37,12 @@ function render(){if(!session?.profile)return;let pp=active(),todayN=moves.filte
 $('#n-products').textContent=pp.length;$('#n-out').textContent=pp.filter(p=>p.stock<=0).length;$('#n-low').textContent=pp.filter(p=>p.min>0&&p.stock>0&&p.stock<p.min).length;$('#n-today').textContent=todayN;
 $('#attention').innerHTML=pp.filter(p=>p.stock<=0||(p.min>0&&p.stock<p.min)).map(p=>productRow(p,false)).join('')||empty('No hay productos con alertas.');
 let term=$('#find-product').value.toLowerCase();
-$('#products').innerHTML=active().filter(p=>p.name.toLowerCase().includes(term)||p.code.toLowerCase().includes(term)).map(p=>productRow(p,true)).join('')||empty('No hay productos. Puedes agregar uno nuevo.');
+$('#products').innerHTML=active().filter(p=>($('#stock-filter').value!=='alert'||p.stock<=0||p.stock<p.min)&&(p.name.toLowerCase().includes(term)||p.code.toLowerCase().includes(term))).map(p=>productRow(p,true)).join('')||empty('No hay productos. Puedes agregar uno nuevo.');
 let query=$('#find-move').value.toLowerCase(),type=$('#filter-type').value;
 $('#moves').innerHTML=moves.filter(m=>inventory.find(p=>p.id===m.data.pid)?.cat==='directo'&&(type==='todos'||type===m.type)&&[m.prod,m.code,m.data.doc,m.data.origin,m.data.dest,m.date].some(v=>String(v||'').toLowerCase().includes(query))).slice(0,600).map(moveRow).join('')||empty('No hay movimientos registrados.');
 $('#counts').innerHTML=active().map(p=>'<div class="item"><div class="item-body"><h3>'+esc(p.name)+'</h3><p>'+esc(p.code)+' · '+esc(p.unit)+'</p></div><div class="quantity"><strong>'+fmt(p.stock)+'</strong><button class="small" data-count="'+esc(p.id)+'">Contar</button></div></div>').join('')||empty('Registra productos para hacer un conteo.');
-$('#appname').textContent=settings.name||'Inventario Web';
+$('#appname').textContent=settings.name && settings.name!=='Inventario Web'?settings.name:'Inventario camaronera';
+$('#display-date').textContent=new Intl.DateTimeFormat('es-EC',{dateStyle:'full'}).format(new Date());
 const pending=events.filter(e=>!e.synced).length;
 $('#network').textContent=!navigator.onLine?'Sin conexión':busy?'Sincronizando…':pending?'Cambios pendientes':settings.lastSync?'Sincronizado':'OneDrive conectado';
 $('#account-label').textContent=$('#cloud-account').textContent=session.profile.label;
@@ -49,11 +50,11 @@ $('#activity').innerHTML=moves.filter(m=>['entrada','salida'].includes(m.type)&&
 $('#account-exit').disabled=busy;
 $('#notice-status').textContent=settings.deviceNotices&&globalThis.Notification?.permission==='granted'?'Avisos del dispositivo activados.':'Los avisos aparecen dentro de la aplicación.';
 $('#device-notices').textContent=settings.deviceNotices?'Desactivar notificaciones del dispositivo':'Activar notificaciones del dispositivo';
-$('#sync-now').disabled=busy||!navigator.onLine||!session;$('#sync-top').disabled=busy||!navigator.onLine||!session;
+$('#sync-now').disabled=busy||!navigator.onLine||!session;
 $('#alert').classList.toggle('hidden',!alerts.length);$('#alert').textContent=alerts.slice(0,5).join(' · ');
 $('#cloud-msg').textContent=events.filter(e=>!e.synced).length+' operaciones sin publicar en OneDrive. Última sincronización: '+(settings.lastSync||'nunca');
 }
-function show(id){page=id;$$('.page').forEach(el=>el.classList.toggle('hidden',el.id!=='p-'+id));$$('.navitem').forEach(el=>el.classList.toggle('on',el.dataset.page===id));render()}
+function show(id){page=id;window.scrollTo(0,0);$$('.page').forEach(el=>el.classList.toggle('hidden',el.id!=='p-'+id));$$('.navitem').forEach(el=>el.classList.toggle('on',el.dataset.page===id));render()}
 const field=(lab,name,val='',type='text',extra='')=>'<label>'+lab+'<input name="'+name+'" type="'+type+'" value="'+esc(val)+'" '+extra+'></label>';
 const select=(lab,name,opts,selected)=>'<label>'+lab+'<select name="'+name+'">'+opts.map(([v,t])=>'<option value="'+esc(v)+'" '+(v===selected?'selected':'')+'>'+esc(t)+'</option>').join('')+'</select></label>';
 function openEditor(kind,pid=null,initial='entrada'){let p=inventory.find(x=>x.id===pid);editor={kind,pid};let h='';
@@ -124,7 +125,22 @@ for(const e of local){if(ids.has(e.id))continue;await up(evFolder.id,e.id+'.json
 const references=new Set(local.filter(x=>['create','edit'].includes(x.type)).map(x=>x.data.photo).filter(Boolean));let localPhotos=await all('photos');for(const p of localPhotos){if(!references.has(p.id))continue;if(names.has(p.id+'.jpg'))continue;let res=await fetch(p.data),blob=await res.blob();await up(phFolder.id,p.id+'.jpg',blob,'image/jpeg');await put('photos',{...p,synced:true})}
 for(const p of remotePhotos){if(!/^[0-9a-f-]{36}\.jpg$/i.test(p.name))continue;let id=p.name.slice(0,-4);if(!references.has(id)||await one('photos',id))continue;let resp=await graph('/me/drive/items/'+enc(p.id)+'/content'),blob=await resp.blob(),data=await new Promise((yes,no)=>{let r=new FileReader();r.onload=()=>yes(r.result);r.onerror=()=>no(r.error);r.readAsDataURL(blob)});await put('photos',{id,data,synced:true})}
 const previousSync=settings.lastSync;await setting('lastSync',new Date().toISOString());await reload();toast('Sincronización completa: '+received+' recibidos, '+sent+' publicados.');if(previousSync)for(const event of newMoves){const product=active().find(p=>p.id===event.data.pid);if(product)notifyMove(event,product)}}finally{busy=false;render()}}
-function setup(){ $$('.navitem').forEach(x=>x.onclick=()=>show(x.dataset.page));$$('[data-action]').forEach(x=>x.onclick=()=>openEditor(x.dataset.action));$('#editor').addEventListener('submit',submitEditor);$('#close').onclick=$('#cancel').onclick=()=>$('#modal').close();
+function prepareReport(){
+  const date=$('#report-date').value;
+  const rows=moves.filter(m=>m.type==='salida'&&m.date===date&&inventory.some(p=>p.id===m.data.pid&&p.cat==='directo'));
+  $('#report-count').textContent=rows.length+' salidas registradas';
+  $('#print-report').disabled=!rows.length;
+  $('#print-area').innerHTML='<h1>Reporte de salidas</h1><p>'+esc(date)+'</p><table><thead><tr><th>Producto</th><th>Cantidad</th><th>Destino</th><th>Documento</th></tr></thead><tbody>'+rows.map(m=>'<tr><td>'+esc(m.code)+' · '+esc(m.prod)+'</td><td>'+fmt(m.q)+' '+esc(m.unit)+'</td><td>'+esc(m.data.dest)+'</td><td>'+esc(m.data.doc)+'</td></tr>').join('')+'</tbody></table>';
+}
+function setup(){
+  $('#cloud-link').onclick=()=>show('onedrive');
+  $('#settings-link').onclick=()=>show('ajustes');
+  $('#view-attention').onclick=()=>{$('#stock-filter').value='alert';$('#find-product').value='';show('productos')};
+  $('#stock-filter').onchange=render;
+  $('#report-open').onclick=()=>{$('#report-date').value=today();prepareReport();$('#report-dialog').showModal()};
+  $('#report-date').oninput=prepareReport;
+  $('#print-report').onclick=()=>{$('#report-dialog').close();window.print()};
+ $$('.navitem').forEach(x=>x.onclick=()=>show(x.dataset.page));$$('[data-action]').forEach(x=>x.onclick=()=>openEditor(x.dataset.action));$('#editor').addEventListener('submit',submitEditor);$('#close').onclick=$('#cancel').onclick=()=>$('#modal').close();
 document.addEventListener('click',async e=>{let t=e.target.closest('[data-edit],[data-move],[data-delete],[data-count]');if(!t)return;try{if(t.dataset.edit)openEditor('producto',t.dataset.edit);if(t.dataset.move)openEditor('movimiento',t.dataset.move);if(t.dataset.count)openEditor('conteo',t.dataset.count);if(t.dataset.delete){let p=inventory.find(x=>x.id===t.dataset.delete);if(p&&confirm('¿Dar de baja el producto '+p.name+'? Sus movimientos se conservarán.'))await saveEvent('delete',{pid:p.id})}}catch(err){fail(err)}});
 ['#find-product','#find-move','#filter-type'].forEach(s=>$(s).addEventListener('input',render));
 $('#save-name').onclick=async()=>{await setting('name',$('#name').value.trim()||'Inventario Web');render();toast('Nombre guardado')};
@@ -138,7 +154,7 @@ $('#device-notices').onclick=async()=>{
   else {toast('Avisos disponibles dentro de la aplicación.')}
   render()
 };
-$('#sync-now').onclick=$('#sync-top').onclick=()=>sync().catch(fail);
+$('#sync-now').onclick=()=>sync().catch(fail);
 window.addEventListener('online',()=>{render();scheduleSync()});window.addEventListener('offline',render);
 }
 async function selectDatabase(driveId){
@@ -173,6 +189,14 @@ async function openAccount(){
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)scheduleSync()})
 }
 async function main(){
+  function setTheme(light){
+    document.documentElement.classList.toggle('light',light);
+    $('#theme-toggle').setAttribute('aria-label',light?'Activar tema oscuro':'Activar tema claro');
+    document.querySelector('meta[name="theme-color"]').content=light?'#eff5f2':'#0b1514';
+  }
+  setTheme(localStorage.getItem('iw-theme')==='light');
+  $('#theme-toggle').onclick=()=>{const light=!document.documentElement.classList.contains('light');localStorage.setItem('iw-theme',light?'light':'dark');setTheme(light)};
+
   if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(console.error);
   window.addEventListener('storage',e=>{if(e.key==='iw-signed-out' || (e.key===SESSION_KEY&&session?.remember&&!e.newValue)){sessionStorage.removeItem(SESSION_KEY);location.replace(redirect())}});
   $('#sign-in').onclick=()=>connect().catch(fail);
