@@ -62,6 +62,7 @@ export class Ledger {
       }
     }
     const event={id:e.id,date:e.date,type:e.type,ts:historical?new Date(e.ts).toISOString():new Date().toISOString(),data,synced:true};
-    this.sql.exec('INSERT INTO events(id,subject,payload) VALUES(?,?,?)',e.id,user.subject,JSON.stringify(event));return event;
+    event.entryOrder=(this.first('SELECT MAX(seq) n FROM events').n||0)+1;
+    this.sql.exec('INSERT INTO events(seq,id,subject,payload) VALUES(?,?,?,?)',event.entryOrder,e.id,user.subject,JSON.stringify(event));return event;
   }
 }

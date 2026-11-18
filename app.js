@@ -33,6 +33,8 @@ async function pullTeam(){
   if(pulling)return pulling;
   pulling=(async()=>{
     const previousSync=settings.lastSync, incoming=[];let rows;
+    if(!settings.hasEntryOrder){await setting('cursor',0)}
+
     do{
       const result=await teamCall('/changes',{after:settings.cursor||0});
       rows=result.rows;
@@ -48,6 +50,7 @@ async function pullTeam(){
       if(result.anchor)await setting('reportAnchor',JSON.parse(result.anchor));
       if(result.name)await setting('name',result.name);
     }while(rows.length===200);
+    await setting('hasEntryOrder',true);
     await setting('lastSync',new Date().toISOString());await reload();
     for(const event of incoming){const product=active().find(p=>p.id===event.data.pid);if(product)notifyMove(event,product)}
   })().finally(()=>{pulling=null});
@@ -99,8 +102,23 @@ async function recoverPersonalInventory(){
     await importTeam(new Blob([json]));
   }finally{personal.close()}
 }
+let workbookCheck=null,lastWorkbookCheck=0,lastWorkbookCursor=-1;
+function checkWorkbook(force=false){
+  if(!canManage()||!navigator.onLine)return;
+  if(workbookCheck)return workbookCheck;
+  const cursor=settings.cursor||0;
+  if(!force&&cursor===lastWorkbookCursor&&Date.now()-lastWorkbookCheck<300000)return;
+  lastWorkbookCheck=Date.now();lastWorkbookCursor=cursor;
+  const status=$('#onedrive-status');status.textContent='Comprobando BASE.xlsm…';
+  workbookCheck=(async()=>{
+    const result=await teamCall('/onedrive/session',{token:await token()});
+    status.textContent=result.message||'Pendiente de comprobar';
+  })().catch(err=>{status.textContent=err.message}).finally(()=>{workbookCheck=null});
+  return workbookCheck;
+}
 function setupTeam(){
-  $('#settings-link').addEventListener('click',async()=>{if(canManage())try{$('#onedrive-status').textContent=(await teamCall('/onedrive/status')).message}catch(error){fail(error)}});
+  $('#settings-link').addEventListener('click',()=>checkWorkbook());
+  $('#workbook-check').onclick=()=>checkWorkbook(true);
   $('#onedrive-connect').onclick=async()=>{try{
     const result=await teamCall('/onedrive/start');
     location.assign(result.url);
@@ -134,6 +152,7 @@ if(e.type==='delete'){x.deleted=true;x.removed=e.date;continue}
 if(['entrada','salida','ajuste','traspaso'].includes(e.type)){let q=Number(d.q);if(!Number.isFinite(q)||(e.type!=='ajuste'&&q<=0)){alerts.push('Cantidad incorrecta: '+e.id);continue}if(e.type==='entrada')x.stock+=q;if(e.type==='salida')x.stock-=q;if(e.type==='ajuste')x.stock+=q;moves.push({...e,prod:x.name,code:x.code,unit:x.unit,q})}
 }
 inventory=[...p.values()].sort(compareProducts);moves.reverse();
+if(TEAM_API)moves.sort((a,b)=>(b.entryOrder||0)-(a.entryOrder||0));
 let codes=new Set();for(const x of inventory){x.stock=Math.round(x.stock*100000)/100000;if(x.stock<0)alerts.push('Saldo negativo en '+x.code);if(!x.deleted&&x.cat==='directo'){if(codes.has(x.code.toLowerCase()))alerts.push('Código repetido '+x.code);codes.add(x.code.toLowerCase())}}}
 async function reload(){events=await all('events');photos=await all('photos');compute();render()}
 function active(){return inventory.filter(p=>!p.deleted&&p.cat==='directo')}
@@ -152,7 +171,7 @@ $('#counts').innerHTML=active().map(p=>'<div class="item"><div class="item-body"
 $('#appname').textContent=settings.name && settings.name!=='Inventario Web'?settings.name:'Inventario camaronera';
 $('#display-date').textContent=new Intl.DateTimeFormat('es-EC',{dateStyle:'full'}).format(new Date());
 const pending=events.filter(e=>!e.synced).length;
-$('#network').textContent=!navigator.onLine?'Sin conexión':busy?'Sincronizando…':pending?'Cambios pendientes':settings.lastSync?'Sincronizado':'OneDrive conectado';
+$('#network').textContent=!navigator.onLine?'Sin conexión':busy?'Sincronizando…':pending?'Cambios pendientes':settings.lastSync?(TEAM_API?'Bodega al día':'Sincronizado'):'OneDrive conectado';
 $('#account-label').textContent=$('#cloud-account').textContent=session.profile.label;
 $('#activity').innerHTML=moves.filter(m=>['entrada','salida'].includes(m.type)&&inventory.some(p=>p.id===m.data.pid&&p.cat==='directo')).slice(0,5).map(moveRow).join('')||empty('Aún no hay entradas ni salidas.');
 $('#account-exit').disabled=busy;
@@ -235,7 +254,7 @@ async function children(id){let out=[],next='/me/drive/items/'+enc(id)+'/childre
 async function up(id,name,body,contentType){return j('/me/drive/items/'+enc(id)+':/'+enc(name)+':/content',{method:'PUT',headers:{'Content-Type':contentType},body})}
 async function childFolder(id,name){let existing=(await children(id)).find(x=>x.name===name);if(existing){if(!existing.folder)throw Error('Existe un archivo con el nombre '+name);return existing}return j('/me/drive/items/'+enc(id)+'/children',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,folder:{},'@microsoft.graph.conflictBehavior':'fail'})})}
 function folderName(){let x=$('#folder').value.trim();if(x.length<8||x.length>95||/[\\/:*?"<>|]/.test(x)||/gambirasi/i.test(x))throw Error('Usa un nombre de carpeta NUEVO, de 8 a 95 caracteres, diferente a Gambirasi.');return x}
-async function sync(){if(busy)return;if(TEAM_API){busy=true;render();try{await pullTeam()}finally{busy=false;render()}return}if(!session||!navigator.onLine)throw Error('Conecta OneDrive y verifica internet.');busy=true;render();try{let folder=folderName(),drive=await j('/me/drive?$select=id,driveType,webUrl'),binding=settings.binding;if(binding&&(binding.driveId!==drive.id||binding.folder!==folder))throw Error('Este inventario local ya está vinculado a otro OneDrive. No se modificarán los datos.');let root;try{root=await j('/me/drive/root:/'+enc(folder))}catch(e){if(e.status!==404)throw e}if(!root)root=await j('/me/drive/root/children',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:folder,folder:{},'@microsoft.graph.conflictBehavior':'fail'})});if(!root.folder)throw Error('La ruta no es una carpeta.');let items=await children(root.id),marker=items.find(x=>x.name===MARK);if(!marker){if(items.length)throw Error('Carpeta existente sin identidad de esta app: elige otra carpeta vacía.');await up(root.id,MARK,JSON.stringify({app:'inventario-web-independent-v1',created:new Date().toISOString()}),'application/json')}else{let d=await (await graph('/me/drive/items/'+enc(marker.id)+'/content')).json();if(d.app!=='inventario-web-independent-v1')throw Error('Esta carpeta pertenece a otra aplicación.')}
+async function sync(){if(busy)return;if(TEAM_API){busy=true;render();try{await pullTeam();checkWorkbook()}finally{busy=false;render()}return}if(!session||!navigator.onLine)throw Error('Conecta OneDrive y verifica internet.');busy=true;render();try{let folder=folderName(),drive=await j('/me/drive?$select=id,driveType,webUrl'),binding=settings.binding;if(binding&&(binding.driveId!==drive.id||binding.folder!==folder))throw Error('Este inventario local ya está vinculado a otro OneDrive. No se modificarán los datos.');let root;try{root=await j('/me/drive/root:/'+enc(folder))}catch(e){if(e.status!==404)throw e}if(!root)root=await j('/me/drive/root/children',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:folder,folder:{},'@microsoft.graph.conflictBehavior':'fail'})});if(!root.folder)throw Error('La ruta no es una carpeta.');let items=await children(root.id),marker=items.find(x=>x.name===MARK);if(!marker){if(items.length)throw Error('Carpeta existente sin identidad de esta app: elige otra carpeta vacía.');await up(root.id,MARK,JSON.stringify({app:'inventario-web-independent-v1',created:new Date().toISOString()}),'application/json')}else{let d=await (await graph('/me/drive/items/'+enc(marker.id)+'/content')).json();if(d.app!=='inventario-web-independent-v1')throw Error('Esta carpeta pertenece a otra aplicación.')}
 let evFolder=await childFolder(root.id,'eventos'),phFolder=await childFolder(root.id,'fotos');
 await setting('binding',{driveId:drive.id,folder});
 let remote=await children(evFolder.id),ids=new Set();let received=0,sent=0;const newMoves=[];for(const f of remote){if(!/^[0-9a-f-]{36}\.json$/i.test(f.name))continue;let id=f.name.slice(0,-5);ids.add(id);let x=await one('events',id);if(x){if(!x.synced)await put('events',{...x,synced:true});continue}let content=await (await graph('/me/drive/items/'+enc(f.id)+'/content')).json();if(!content.event||content.event.id!==id)throw Error('Movimiento remoto inválido');await put('events',{...content.event,synced:true});received++;if(['entrada','salida'].includes(content.event.type))newMoves.push(content.event)}
@@ -302,7 +321,7 @@ async function openAccount(){
     setSession({...session,profile:{id:teamUser.subject,label:teamUser.email}});
     db=await openDB(DB+'-shared-'+encodeURIComponent(TEAM_API)+'-'+teamUser.subject);
     for(const row of await all('settings'))settings[row.id]=row.value;
-    setup();setupTeam();await pullTeam();
+    setup();setupTeam();await pullTeam();checkWorkbook();
     $('#name').value=settings.name||'Inventario Web';
     $('#folder').closest('label').hidden=true;
     $('#p-onedrive h2').textContent='Bodega compartida';

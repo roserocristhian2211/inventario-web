@@ -33,7 +33,17 @@ export default {async fetch(req,env){
 async function digest(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),x=>x.toString(16).padStart(2,'0')).join('')}
 export class Bodega {
   constructor(ctx,env){this.ctx=ctx;this.env=env;this.db=new Ledger(ctx.storage.sql)}
-  async alarm(){await syncCloud(this.ctx,this.env,this.db)}
+  synchronize(token){
+    if(!this.syncing)this.syncing=syncCloud(this.ctx,this.env,this.db,token).finally(()=>{this.syncing=null});
+    return this.syncing;
+  }
+  async alarm(){await this.synchronize()}
+  async wakeWorkbook(){
+    const store=this.ctx.storage;
+    if(!await store.get('onedrive-connection'))return;
+    const next=Date.now()+1500,current=await store.getAlarm();
+    if(!current||current>next)await store.setAlarm(next);
+  }
   async fetch(req){
     try{
       if(req.method==='GET' && new URL(req.url).pathname==='/onedrive/callback'){
@@ -45,6 +55,11 @@ export class Bodega {
         return new Response('Cuenta de OneDrive conectada. Puedes volver a Inventario Web.',{headers:{'Content-Type':'text/plain;charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
       }
       const {subject,label,body}=await req.json(), path=new URL(req.url).pathname;
+      if(path==='/onedrive/session'){
+        requireValue(subject===this.env.ADMIN_SUB,'Acceso exclusivo del administrador.',403);
+        requireValue(typeof body.token==='string'&&body.token.length>20,'Vuelve a iniciar sesión con Microsoft.');
+        return reply({message:await this.synchronize(body.token)});
+      }
       if(path==='/onedrive/status'){
         requireValue(subject===this.env.ADMIN_SUB,'Acceso exclusivo del administrador.',403);
         return reply({message:await this.ctx.storage.get('onedrive-status')||'Pendiente de autorización'});
@@ -69,7 +84,7 @@ export class Bodega {
         if(path==='/me'||path==='/join')return user;
         if(path==='/changes'){
           const rows=[...sql.exec('SELECT seq,payload FROM events WHERE seq>? ORDER BY seq LIMIT 200',Number(body.after)||0)];
-          return {anchor:db.first("SELECT value FROM config WHERE key='anchor'")?.value,rows:rows.map(r=>({seq:r.seq,event:JSON.parse(r.payload)})),name:db.first("SELECT value FROM config WHERE key='name'")?.value};
+          return {anchor:db.first("SELECT value FROM config WHERE key='anchor'")?.value,rows:rows.map(r=>({seq:r.seq,event:{entryOrder:r.seq,...JSON.parse(r.payload)}})),name:db.first("SELECT value FROM config WHERE key='name'")?.value};
         }
         if(path==='/photo'){return db.first('SELECT data FROM photos WHERE id=?',String(body.id))||{}}
         if(path==='/event')return db.append(body,user);
@@ -95,7 +110,9 @@ export class Bodega {
         if(path==='/invite'){requireValue(!db.first('SELECT email FROM members WHERE email=?',address),'Ya tiene acceso.',409);sql.exec('INSERT OR REPLACE INTO invites VALUES(?,?)',address,hash);return {code:secret}}
         if(path==='/remove'){sql.exec('DELETE FROM invites WHERE email=?',address);sql.exec('DELETE FROM members WHERE email=?',address);return {}}
         throw Object.assign(new Error('Ruta inexistente.'),{status:404});
-      });return reply(result);
+      });
+      if(['/batch','/event','/import'].includes(path))this.ctx.waitUntil(this.wakeWorkbook());
+      return reply(result);
     }catch(e){return reply({error:e.status?e.message:'No se pudo guardar la operación.'},e.status||400)}
   }
 }

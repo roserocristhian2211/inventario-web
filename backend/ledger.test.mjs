@@ -59,3 +59,16 @@ test('anular salida restituye el saldo una sola vez y requiere administrador',()
  assert.throws(()=>ledger.append({...cancel,id:randomUUID()},admin),/ya fue anulada/);
  assert.equal(ledger.first('SELECT stock FROM products').stock,20e6);
 });
+
+test('una salida digitada después conserva su posición aunque sea de una fecha anterior',()=>{
+ const db=new DatabaseSync(':memory:');
+ const ledger=new Ledger({exec(query,...args){const q=db.prepare(query);return q.columns().length?q.all(...args):(q.run(...args),[])}});
+ const admin={subject:'owner',role:'admin',email:'owner@example.test'},pid=randomUUID();
+ const event=(type,date,data)=>({type,date,id:randomUUID(),data:{pid,...data}});
+ ledger.append(event('create','2026-11-01',{code:'A',name:'Producto',unit:'SC',cat:'directo'}),admin);
+ ledger.append(event('entrada','2026-11-01',{q:4}),admin);
+ const first=ledger.append(event('salida','2026-11-18',{q:1}),admin);
+ const second=ledger.append(event('salida','2026-11-17',{q:1}),admin);
+ assert.ok(second.entryOrder>first.entryOrder);
+ assert.equal(ledger.append(first,admin).entryOrder,first.entryOrder);
+});

@@ -51,16 +51,37 @@ export function reconcileWorkbook(bytes,events,linked){
     if(e.type==='entrada'||e.type==='salida')byId.set(e.id,e);
   }
   for(const p of catalog.values()){byCode.set(p.code,p);byName.set(p.name,p)}
-  const stock=read('xl/worksheets/sheet1.xml'),stockByCode=new Map();
+  const stock=read('xl/worksheets/sheet1.xml'),stockByCode=new Map(),stockRows=new Map();
+  const stockTable=read('xl/tables/table1.xml'),table=stockTable.documentElement;
+  const stockRange=table.getAttribute('ref').match(/^B3:J(\d+)$/);
+  check(stockRange&&table.getAttribute('name')==='INVENTARIO','Revisa la tabla INVENTARIO de BASE');
+  let stockEnd=+stockRange[1],stockDirty=false;
+  const changes=[],seen=new Set(),legacy=new Map(),totals=new Map();let dirty=false;
   for(const row of nodes(stock,'row')){
     if(+row.getAttribute('r')<4)continue;
-    const v=cellValues(row,strings);if(v.B)stockByCode.set(v.B,v);
+    const v=cellValues(row,strings);if(v.B){stockByCode.set(v.B,v);stockRows.set(v.B,row)}
   }
   for(const p of catalog.values()){
     const v=stockByCode.get(p.code);
-    check(v&&v.C===p.name&&v.E===p.unit,'El catálogo de BASE y la app difiere para '+p.code);
+    if(v){check(v.C===p.name&&v.E===p.unit,'El catálogo de BASE y la app difiere para '+p.code);continue}
+    // Only append products created in the app. A missing historical item is a conflict.
+    const original=events.find(e=>e.type==='create'&&e.data.pid===p.pid);
+    check(original&&original.data.actor!=='Historial BASE'&&original.data.code===p.code&&!stockByCode.has(original.data.code),'Revisa el producto '+p.code+' en BASE');
+    const data=first(stock,'sheetData'),last=nodes(data,'row').at(-1);
+    check(+last.getAttribute('r')===stockEnd,'Hay contenido debajo de la tabla INVENTARIO');
+    const row=last.cloneNode(true),n=++stockEnd;row.setAttribute('r',n);
+    for(const cell of nodes(row,'c'))cell.setAttribute('r',cell.getAttribute('r').replace(/\d+$/,n));
+    data.appendChild(row);setCell(row,'A',n-3,{numeric:true});
+    for(const [col,value] of [['B',p.code],['C',p.name],['D',p.code],['E',p.unit]])setCell(row,col,value);
+    const opening=events.filter(e=>e.type==='ajuste'&&e.data.pid===p.pid&&e.data.doc==='INVENTARIO INICIAL').reduce((q,e)=>q+e.data.q,0);
+    setCell(row,'F',opening,{numeric:true});stockRows.set(p.code,row);
+    stockByCode.set(p.code,{B:p.code,C:p.name,E:p.unit,F:opening});stockDirty=true;
+    const ref='B3:J'+n;table.setAttribute('ref',ref);first(table,'autoFilter')?.setAttribute('ref',ref);
+    first(stock,'dimension')?.setAttribute('ref','A1:J'+n);
   }
-  const changes=[],seen=new Set(),legacy=new Map();let dirty=false;
+  const accumulate=(pid,kind,q)=>{
+    const t=totals.get(pid)||{entrada:0,salida:0};t[kind]+=Math.round(q*1e6);totals.set(pid,t);
+  };
   for(const e of byId.values())if(e.data.actor==='Historial BASE'&&!linked.has(e.id)){
     const k=signature(fields(e));if(!legacy.has(k))legacy.set(k,[]);legacy.get(k).push(e.id);
   }
@@ -98,7 +119,7 @@ export function reconcileWorkbook(bytes,events,linked){
         check(kind==='salida'&&byId.has(id)&&signature(movement)===signature(fields(byId.get(id))),'Salida anulada con cambios en BASE');
         setCell(row,'F',0,{numeric:true});sheetDirty=true;continue;
       }
-      seen.add(id);const previous=byId.get(id);
+      accumulate(product.pid,kind,movement.q);seen.add(id);const previous=byId.get(id);
       if(!previous||signature(movement)!==signature(fields(previous))){
         check(!previous||linked.has(id),'No se pudo conciliar el historial inicial');
         check(!previous||(previous.type===kind&&linked.get(id)===signature(fields(previous))),'Movimiento modificado en ambos lados');
@@ -109,7 +130,7 @@ export function reconcileWorkbook(bytes,events,linked){
       if(voided.has(id)||e.type!==kind||seen.has(id))continue;
       check(!linked.has(id)&&e.data.actor!=='Historial BASE','Falta una fila histórica o vinculada en '+name);
       const row=empty.shift(),product=catalog.get(e.data.pid);check(row&&product,'Revisa catálogo o amplía la tabla '+name);
-      const m=fields(e);
+      const m=fields(e);accumulate(product.pid,kind,m.q);
       setCell(row,'A',m.ref);setCell(row,'B',serial(m.date),{numeric:true,style:dateStyle});
       setCell(row,'C',product.code,{formula:kind==='entrada'});setCell(row,'D',product.name,{formula:kind==='salida'});
       setCell(row,'E',product.unit,{formula:true});setCell(row,'F',m.q,{numeric:true});setCell(row,'G',id);
@@ -121,6 +142,18 @@ export function reconcileWorkbook(bytes,events,linked){
       save(sheetPath,doc);save(tabPath,tab);dirty=true;
     }
   }
+  // Keep cached stock visible to readers which do not run Excel's calculation engine.
+  for(const p of catalog.values()){
+    const t=totals.get(p.pid)||{entrada:0,salida:0},row=stockRows.get(p.code),old=cellValues(row,strings);
+    const incoming=t.entrada/1e6,outgoing=t.salida/1e6,total=(Math.round(Number(old.F||0)*1e6)+t.entrada)/1e6;
+    for(const [col,value] of [['G',incoming],['H',outgoing],['I',Math.round((total-outgoing)*1e6)/1e6],['J',total]]){
+      if(Number(old[col])===value)continue;
+      const cell=nodes(row,'c').find(c=>c.getAttribute('r')===col+row.getAttribute('r'));
+      check(cell&&first(cell,'f'),'Revisa la fórmula de '+col+row.getAttribute('r')+' en Stock');
+      setCell(row,col,value,{numeric:true,formula:true});stockDirty=true;
+    }
+  }
+  if(stockDirty){save('xl/worksheets/sheet1.xml',stock);save('xl/tables/table1.xml',stockTable);dirty=true}
   if(dirty){const book=read('xl/workbook.xml');first(book,'calcPr')?.setAttribute('fullCalcOnLoad','1');save('xl/workbook.xml',book)}
   return {bytes:dirty?zipSync(parts,{level:3}):null,changes,seen};
 }
