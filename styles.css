@@ -170,3 +170,21 @@ dialog::backdrop {background: rgb(9 22 32 / 48%)}
 .back-link span {color: var(--accent); font-size: 20px; line-height: 1}
 .mast #appname {flex: 1}
 dialog .back-link {margin: 4px 0 8px}
+
+#report-dialog {padding: 14px 18px 20px}
+#report-dialog .report-block {display: grid; gap: 10px; margin: 0; padding: 15px 0; border-top: 1px solid var(--control-line)}
+#report-dialog .modalhead {margin: 4px 0}
+#report-dialog .report-block:first-of-type {border-top: 0}
+.report-block h3 {font-size: 16px; margin: 0}
+.report-block p,.report-result {font-size: 14px; line-height: 1.45; margin: 0; color: var(--muted)}
+.report-result:empty {display: none}
+.report-block[data-report=daily] .report-result {padding: 10px 12px; border-radius: 10px; color: var(--fg); background: var(--stock-band)}
+.report-pair,.report-downloads {display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px}
+.report-downloads :only-child {grid-column: 1/-1}
+.report-downloads .btn:not(.outline) {background: var(--action); border-color: var(--action)}
+.report-block details > label,.report-block details > .report-pair {margin: 7px 0}
+#report-dialog .allocation {display: flex; align-items: center; gap: 6px}
+.report-share {justify-self: start; background: transparent; border: 0; color: var(--accent); font: inherit; cursor: pointer}
+:root:not(.light) #report-dialog {--sheet:#111419; --control:#1c2027; --control-line:#30353c; --action:#23a19e; --stock-band:#173332; --muted:#b9c0c8}
+:root:not(.light) #report-dialog :is(.report-downloads .btn:not(.outline),.switchbar input:checked+span) {color:#071d20}
+@media(max-width:650px){#report-dialog {padding: 0 14px max(18px,env(safe-area-inset-bottom))}#report-dialog .back-link {margin-top: 8px}}

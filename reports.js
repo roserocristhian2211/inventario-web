@@ -107,44 +107,71 @@ export function buildReport(kind,input,items,movements,anchor){
   return report;
 }
 export function setupReportUI(ctx){
-  const {$,today}=ctx,dialog=$('#report-dialog');
-  $('#report-open').onclick=()=>{
-    const date=today(),month=date.slice(0,7);
-    dialog.innerHTML='<form method="dialog"><button type="button" class="back-link" data-back><span aria-hidden="true">←</span> Volver</button><div class="modalhead"><h2>Reportes</h2><button aria-label="Cerrar">✕</button></div><label>Reporte<select id="report-kind">'+[['daily','Consumos diarios (correo)'],['range','Consumo entre fechas'],['saldo','Saldo disponible'],['kpi','Reporte mensual de KPI']].map(([k,l])=>opt(k,l)).join('')+'</select></label><div id="report-options"></div><div id="report-preview" aria-live="polite"></div><div class="actions"><button type="button" class="btn" id="report-pdf">Descargar PDF</button><button type="button" class="btn outline" id="report-share">Compartir PDF</button><button type="button" class="btn outline" id="report-xlsx">Descargar Excel</button></div></form>';
-    function options(){
-      const kind=$('#report-kind').value,author='<label>Elaborado por<input name="author" value="CRISTHIAN ROSERO" maxlength="80"></label>';
-      const dates=(label,key,value,type='date')=>'<label>'+label+'<input type="'+type+'" name="'+key+'" value="'+esc(value)+'"></label>';
-      const segments=(title,name,choices)=>'<fieldset class="filter-switch"><legend>'+title+'</legend><div class="switchbar">'+choices.map(([key,label],i)=>'<label><input type="radio" name="'+name+'" value="'+key+'" '+(i===0?'checked':'')+'><span>'+label+'</span></label>').join('')+'</div></fieldset>';
-      let html='';
-      if(kind==='daily'){
-        html=dates('Fecha','date',date)+author+'<details><summary>Responsables del reporte</summary>'+[['reviewed','Revisado por · Producción'],['approved','Aprobado por · Administración'],['received','Recibido por · Contabilidad']].map(([key,label])=>'<label>'+label+'<input name="'+key+'" maxlength="64" value="'+esc(localStorage.getItem('iw-report-'+key)||'')+'"></label>').join('')+'</details>';
-        if(ctx.admin()){const a=ctx.anchor()||referenceReport;html+='<details><summary>Numeración del reporte</summary><p>Usa un reporte conocido como referencia. El número avanza uno por día calendario.</p>'+dates('Fecha del reporte conocido','anchorDate',a?.date||date)+dates('Número de ese reporte','anchorNumber',a?.number||'','number')+'<button type="button" id="anchor-save" class="small">Guardar referencia</button></details>'}
-      }else if(kind==='kpi')html=dates('Mes','month',month,'month')+author;
-      else if(kind==='range'){
-        const extra=[...new Set(ctx.moves().filter(m=>m.type==='salida').map(place))].filter(d=>!destinations.includes(d));
-        html=dates('Desde','from',month+'-01')+dates('Hasta','to',date)+segments('Agrupar por','group',[['product','Producto'],['dest','Piscina / precría']])+segments('Grupo','family',[['','Todo'],['balanceado','Balanceado'],['insumo','Insumos']])+'<label>Destino<select name="destination">'+opt('','Todos')+[...destinations,...extra].map(d=>opt(d)).join('')+'</select></label><label><input type="checkbox" name="allocated"> Aplicar traspasos de consumo</label>';
+  const dialog=ctx.$('#report-dialog');
+  ctx.$('#report-open').onclick=()=>{
+    const date=ctx.today(),month=date.slice(0,7);
+    const field=(label,name,type,value)=>'<label>'+label+'<input name="'+name+'" type="'+type+'" value="'+esc(value)+'"></label>';
+    const author=field('Elaborado por','author','text','Cristhian Rosero');
+    const pair=(left,right)=>'<div class="report-pair">'+left+right+'</div>';
+    const segments=(title,name,choices)=>'<fieldset class="filter-switch"><legend>'+title+'</legend><div class="switchbar">'+choices.map(([key,label],i)=>'<label><input type="radio" name="'+name+'" value="'+key+'" '+(i===0?'checked':'')+'><span>'+label+'</span></label>').join('')+'</div></fieldset>';
+    const extra=[...new Set(ctx.moves().filter(m=>m.type==='salida').map(place))].filter(d=>!destinations.includes(d));
+    const anchor=ctx.anchor()||referenceReport;
+    const signatures=['reviewed','approved','received'];
+    const advanced='<details><summary>Opciones del reporte diario</summary>'+signatures.map((key,i)=>field(['Revisado por · Producción','Aprobado por · Administración','Recibido por · Contabilidad'][i],key,'text',localStorage.getItem('iw-report-'+key)||'')).join('')+(ctx.admin()?pair(field('Fecha del reporte conocido','anchorDate','date',anchor.date),field('Número de ese reporte','anchorNumber','number',anchor.number))+'<button type="button" class="small" id="anchor-save">Guardar referencia</button>':'')+'</details>';
+    const range=pair(field('Desde','from','date',month+'-01'),field('Hasta','to','date',date))+
+      segments('Agrupar por','group',[['product','Producto'],['dest','Piscina / precría']])+
+      segments('Grupo','family',[['','Todo'],['balanceado','Balanceado'],['insumo','Insumos']])+
+      '<label>Piscina / precría<select name="destination">'+opt('','Todas')+[...destinations,...extra].map(d=>opt(d)).join('')+'</select></label>';
+    const block=(kind,title,description,controls,pdf,more='')=>'<form class="report-block" data-report="'+kind+'" aria-label="'+title+'"><h3>'+title+'</h3>'+(description?'<p>'+description+'</p>':'')+controls+'<div class="report-result" aria-live="polite"></div><div class="report-downloads"><button type="button" class="btn" data-export="pdf">'+pdf+'</button>'+(kind==='range'?'<button type="button" class="btn outline" data-export="xlsx">Descargar Excel</button>':'')+'</div>'+more+(navigator.canShare?'<button class="report-share" type="button" data-export="share">Compartir PDF</button>':'')+'</form>';
+    dialog.innerHTML='<button type="button" class="back-link" data-back><span aria-hidden="true">←</span> Volver</button><div class="modalhead"><h2>Reportes</h2><button type="button" aria-label="Cerrar">✕</button></div>'+
+      block('saldo','Saldo disponible','','','Descargar PDF de saldos')+
+      block('kpi','Reporte mensual de KPI','Balanceado consumido en sacos y libras, promedio diario, cobertura, rotación, entradas, salidas y consumo por piscina y producto.',pair(field('Mes','month','month',month),author),'Generar PDF de KPI')+
+      block('daily','Consumos diarios (formato CORREO)','Piscinas y precrías en columnas. Solo aparecen los productos despachados ese día, primero los balanceados y después los insumos, en orden alfabético.',pair(field('Fecha','date','date',date),author),'Descargar PDF de consumos diarios',advanced)+
+      block('range','Consumo entre fechas','',range,'Descargar PDF','<label class="allocation"><input type="checkbox" name="allocated"> Aplicar traspasos de consumo</label>');
+    dialog.querySelector('[aria-label="Cerrar"]').onclick=()=>dialog.close();
+    for(const form of dialog.querySelectorAll('.report-block')){
+      const kind=form.dataset.report,result=form.querySelector('.report-result');
+      function get(){
+        const input={...Object.fromEntries(new FormData(form)),today:date};
+        let movements=ctx.moves();
+        if(kind==='range'&&input.allocated){
+          movements=ctx.allocated(input.from,input.to).filter(r=>r.net>0.0000001).map(r=>({type:'salida',date:input.to,unit:r.unit,q:r.net,data:{pid:r.pid,dest:r.dest}}));
+        }
+        return buildReport(kind,input,ctx.inventory(),movements,ctx.anchor());
       }
-      $('#report-options').innerHTML=html;$('#report-pdf').textContent={daily:'Descargar PDF de consumos diarios',range:'Descargar PDF',saldo:'Descargar PDF de saldos',kpi:'Generar PDF de KPI'}[kind];$('#report-xlsx').hidden=kind!=='range';
-      if($('#anchor-save'))$('#anchor-save').onclick=async()=>{try{const f=dialog.querySelector('form').elements,date=f.anchorDate.value,number=Number(f.anchorNumber.value);if(!date||!Number.isSafeInteger(number)||number<1)throw Error('Indica fecha y número del último reporte.');await ctx.saveAnchor({date,number});preview()}catch(e){ctx.fail(e)}};
+      function preview(){
+        let enabled=false;
+        try{
+          const report=get(),{head,rows}=report.sections[0];enabled=rows.length>0;
+          if(kind==='saldo')result.textContent='Productos con saldo mayor a cero ('+rows.length+'), con código, descripción, unidad y saldo actual.';
+          if(kind==='kpi')result.textContent='';
+          if(kind==='daily'){
+            const names=[...new Set(rows.map(row=>row[0]))];
+            result.textContent=report.title+' · '+(names.length?names.length+' producto(s) con salidas: '+names.join(', '):'Sin salidas en la fecha seleccionada.');
+          }
+          if(kind==='range')result.innerHTML=enabled?'<div class="report-scroll"><table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(x=>'<td>'+esc(typeof x==='number'?x.toLocaleString('es-EC',{minimumFractionDigits:2,maximumFractionDigits:6}):x)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>':'Sin despachos para esta selección.';
+        }catch(e){result.textContent=e.message}
+        for(const b of form.querySelectorAll('[data-export]'))b.disabled=!enabled;
+      }
+      form.oninput=preview;form.onsubmit=e=>e.preventDefault();
+      const save=form.querySelector('#anchor-save');
+      if(save)save.onclick=async()=>{try{
+        const date=form.elements.anchorDate.value,number=Number(form.elements.anchorNumber.value);
+        if(!date||!Number.isSafeInteger(number)||number<1)throw Error('Indica fecha y número del reporte conocido.');
+        await ctx.saveAnchor({date,number});preview();
+      }catch(e){ctx.fail(e)}};
+      for(const b of form.querySelectorAll('[data-export]'))b.onclick=async()=>{try{
+        const report=get(),writer=await import('./report-vendor.js?v=12');
+        if(kind==='daily')for(const key of signatures)localStorage.setItem('iw-report-'+key,form.elements[key].value);
+        if(b.dataset.export==='share'){
+          const files=[writer.makePDF(report,true)];
+          if(!navigator.canShare?.({files}))throw Error('Descarga el PDF para adjuntarlo.');
+          await navigator.share({files});
+        }else if(b.dataset.export==='xlsx')await writer.makeExcel(report);
+        else await writer.makePDF(report);
+      }catch(e){if(e.name!=='AbortError')ctx.fail(e)}};
       preview();
     }
-    const get=()=>{
-      const kind=$('#report-kind').value,input={...Object.fromEntries(new FormData(dialog.querySelector('form'))),today:date};
-      let movements=ctx.moves();
-      if(kind==='range'&&input.allocated){
-        const byId=new Map(ctx.inventory().map(p=>[p.id,p]));
-        movements=ctx.allocated(input.from,input.to).filter(r=>r.net>0.0000001).map(r=>({type:'salida',date:input.to,unit:r.unit,q:r.net,data:{pid:r.pid,dest:r.dest},prod:byId.get(r.pid)?.name}));
-      }
-      return buildReport(kind,input,ctx.inventory(),movements,ctx.anchor());
-    };
-    function preview(){
-      try{const report=get(),s=report.sections[0];$('#report-preview').innerHTML='<h3>'+esc(report.title)+'</h3><div class="report-scroll"><table><thead><tr>'+s.head.map(v=>'<th>'+esc(v)+'</th>').join('')+'</tr></thead><tbody>'+s.rows.map(row=>'<tr>'+row.map(v=>'<td>'+esc(typeof v==='number'?v.toLocaleString('es-EC',{maximumFractionDigits:3}):v)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';$('#report-share').disabled=$('#report-pdf').disabled=$('#report-xlsx').disabled=!s.rows.length;if(!s.rows.length)$('#report-preview').insertAdjacentHTML('beforeend','<p>Sin registros para esta selección.</p>')}
-      catch(e){$('#report-preview').textContent=e.message;$('#report-share').disabled=$('#report-pdf').disabled=$('#report-xlsx').disabled=true}
-    }
-    $('#report-kind').onchange=options;$('#report-options').oninput=preview;
-    for(const [id,fn] of [['#report-pdf','makePDF'],['#report-xlsx','makeExcel']])$(id).onclick=async()=>{try{const report=get();if(report.daily){for(const key of ['reviewed','approved','received'])localStorage.setItem('iw-report-'+key,dialog.querySelector('form').elements[key].value)}const writer=await import('./report-vendor.js?v=12');await writer[fn](report)}catch(e){ctx.fail(e)}};
-    $('#report-share').hidden=!navigator.canShare;
-    $('#report-share').onclick=async()=>{try{const writer=await import('./report-vendor.js?v=12');const files=[writer.makePDF(get(),true)];if(!navigator.canShare?.({files}))throw Error('Descarga el PDF para adjuntarlo.');await navigator.share({files})}catch(e){if(e.name!=='AbortError')ctx.fail(e)}};
-    options();dialog.showModal();
+    dialog.showModal();dialog.scrollTop=0;
   };
 }
