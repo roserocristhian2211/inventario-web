@@ -1,4 +1,4 @@
-import {installDirect,pondRows} from './direct.js?v=15';
+import {installDirect,pondRows} from './direct.js?v=16';
 import {installImport,planInventoryImport} from './consumption.js?v=12';
 let refreshCounts,moveLimit=80;
 import {setupReportUI,familyOf,compareProducts,destinations} from './reports.js?v=15';

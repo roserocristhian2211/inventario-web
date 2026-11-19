@@ -1,4 +1,4 @@
-import {destinations,familyOf,compareProducts} from './reports.js?v=12';
+import {destinations,familyOf} from './reports.js?v=12';
 
 export function measurements(events){
   const current=new Map();
@@ -137,36 +137,12 @@ export function installDirect(ctx){
         const cancel=record('anular',{pid:d.pid,target:m.id});batch=isIn?[replacement,cancel]:[cancel,replacement];key=signature}
       await save(batch);dialog.close();toast('Movimiento corregido.')});
   }
-  function poolView(){
-    open('Consumo por piscina y precría','<form>'+label('Desde',input('from','date',today().slice(0,7)+'-01'))+label('Hasta',input('to','date',today()))+label('Grupo',select('family',opt('','Todos')+opt('balanceado','Balanceado')+opt('insumo','Insumos')))+label('Destino',select('dest',opt('','Todos')+[...new Set([...destinations,...directMoves().map(m=>m.data.dest).filter(Boolean)])].map(d=>opt(d)).join('')))+'</form><div id="pool-results"></div><div class="actions">'+button('pool-excel','Descargar Excel')+(admin()?button('transfer-new','Nuevo traspaso'):'')+'</div><h3>Traspasos registrados</h3><div id="pool-history"></div>');
-    const head=['Destino','Código','Producto','Unidad','Directo','Recibido','Transferido','Acumulado','Libras'];
-    let rows=[];
-    function paint(){try{const f=Object.fromEntries(controls());rows=pondRows(directMoves(),events(),f.from,f.to).filter(r=>(!f.dest||r.dest===f.dest)&&(!f.family||familyOf(getProduct(r.pid))===f.family)).sort((a,b)=>a.dest.localeCompare(b.dest,'es',{numeric:true})||compareProducts(getProduct(a.pid),getProduct(b.pid))).map(r=>{const p=getProduct(r.pid),factor=weightFactor(p,r.unit);return [r.dest,p.code,p.name,r.unit,r.direct,r.received,r.sent,r.net,factor?r.net*factor:'']});
-      const summary=new Map();
-      for(const row of rows){const d=row[0],u=row[3],v=summary.get(d)||{lb:0,rest:new Map()};if(row[8]!=='')v.lb+=row[8];else v.rest.set(u,(v.rest.get(u)||0)+row[7]);summary.set(d,v)}
-      $('#pool-results').innerHTML=grid(['Destino','Consumo acumulado'],[...summary].map(([d,v])=>[d,[...(v.lb?[num(v.lb)+' lb']:[]),...[...v.rest].map(([u,q])=>num(q)+' '+u)].join(' · ')||'0']))+grid(head,rows);$('#pool-excel').disabled=!rows.length}catch(e){$('#pool-results').textContent=e.message;$('#pool-excel').disabled=true}}
-    dialog.querySelector('form').oninput=paint;paint();on('#pool-excel',()=>exportSheets('Consumo-por-piscina',[{name:'Por piscina',rows:[head,...rows]}]));
-    const list=allocations(events()).reverse();
-    $('#pool-history').innerHTML=list.map(e=>'<p>'+escape(e.date)+' · '+escape(e.data.origin)+' → '+escape(e.data.targets.map(t=>t.dest+' '+num(t.pct)+'%').join(', '))+' · '+escape(e.data.from)+' / '+escape(e.data.to)+(admin()?' <button data-remove-transfer="'+escape(e.id)+'">Eliminar</button>':'')+'</p>').join('')||'Sin traspasos.';
-    on('#transfer-new',transferForm);
-  }
-  function transferForm(){
-    const choices=destinations.map(d=>opt(d)).join('');
-    open('Traspaso de consumo','<form>'+label('Origen',select('origin',choices))+label('Consumo desde',input('from','date',today().slice(0,7)+'-01','required'))+label('Consumo hasta',input('to','date',today(),'required'))+label('Fecha de traspaso',input('when','date',today(),'required'))+'<fieldset><legend>Porcentaje por destino</legend><div class="ponds">'+destinations.map(d=>label(d,input(d,'number','','min="0" max="100" step="any"'))).join('')+'</div></fieldset><output id="transfer-total"></output>'+label('Nota',input('note','text','','maxlength="180"'))+button('transfer-save','Guardar traspaso')+'</form>',true);
-    function values(){const f=Object.fromEntries(controls());const targets=destinations.map(dest=>({dest,pct:Number(f[dest])})).filter(t=>t.pct>0);return {f,targets,sum:targets.reduce((s,t)=>s+t.pct,0)}}
-    const paint=()=>{$('#transfer-total').textContent='Total asignado: '+num(values().sum)+'%'};dialog.querySelector('form').oninput=paint;paint();
-    let pending,key;
-    on('#transfer-save',async()=>{const {f,targets,sum}=values();if(!current().length||!dialog.querySelector('form').reportValidity()||Math.abs(sum-100)>0.000001||targets.some(t=>t.dest===f.origin)||f.from>f.to||f.from>f.when)throw Error('Revisa el período, los destinos y la suma de 100%.');
-      const data={pid:current()[0].id,origin:f.origin,targets,from:f.from,to:f.to,note:f.note};const k=JSON.stringify([data,f.when]);if(k!==key){pending=record('reparto',data);pending.date=f.when;key=k}await save([pending]);poolView()});
-  }
-  document.addEventListener('click',async e=>{const t=e.target.closest('[data-card],[data-detail],[data-measure],[data-remove-transfer]');if(!t)return;try{
+  document.addEventListener('click',async e=>{const t=e.target.closest('[data-card],[data-detail],[data-measure]');if(!t)return;try{
     if(t.dataset.card)productView(getProduct(t.dataset.card));
     if(t.dataset.detail)movementView(moves().find(m=>m.id===t.dataset.detail));
     if(t.dataset.measure){const p=getProduct(t.dataset.measure);open('Conteo físico','<form><h3>'+escape(p.name)+'</h3><p>Sistema: '+num(p.stock)+' '+escape(p.unit)+'</p>'+label('Cantidad física',input('physical','number',measurements(events()).get(p.id)?.data.physical??'','min="0" step="any" required'))+button('count-save','Guardar conteo')+'</form>');
       on('#count-save',async()=>{if(!dialog.querySelector('form').reportValidity())return;const physical=Number(controls().get('physical'));await save([record('medicion',{pid:p.id,physical})]);countsView();dialog.close()})}
-    if(t.dataset.removeTransfer&&admin()&&confirm('¿Eliminar el traspaso?')){const transfer=allocations(events()).find(x=>x.id===t.dataset.removeTransfer);await save([record('anular',{pid:transfer.data.pid,target:transfer.id})]);poolView()}
   }catch(error){fail(error)}});
-  on('#pools',poolView);
   function workbook(){const stock={name:'Stock',rows:[['Código Producto','Descripción','Medida','Inicio y ajustes','Entradas','Salidas','Stock Actual'],...current().map(p=>{const hist=directMoves().filter(m=>m.data.pid===p.id),sum=t=>hist.filter(m=>m.type===t).reduce((n,m)=>n+m.q,0);return [p.code,p.name,p.unit,sum('ajuste'),sum('entrada'),sum('salida'),p.stock]})]};
     const sheets=['entrada','salida'].map(t=>({name:t==='entrada'?'Entradas':'Salidas',rows:[[t==='entrada'?'Nro. Documento':'PSC/PRE','Fecha','Codigo Producto','Descripción','Medida','Cantidad','IdMovimiento'],...directMoves().filter(m=>m.type===t).map(m=>[t==='entrada'?m.data.doc:m.data.dest,m.date,m.code,m.prod,m.unit,m.q,m.id])]}));
     return [stock,...sheets,countSheet()]}
