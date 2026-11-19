@@ -37,10 +37,10 @@ export class Bodega {
     if(!this.syncing)this.syncing=syncCloud(this.ctx,this.env,this.db,token).finally(()=>{this.syncing=null});
     return this.syncing;
   }
-  async alarm(){await this.synchronize()}
+  async alarm(){if(!await this.ctx.storage.get('excel-paused'))await this.synchronize()}
   async wakeWorkbook(){
     const store=this.ctx.storage;
-    if(!await store.get('onedrive-connection'))return;
+    if(await store.get('excel-paused')||!await store.get('onedrive-connection'))return;
     const next=Date.now()+1500,current=await store.getAlarm();
     if(!current||current>next)await store.setAlarm(next);
   }
@@ -55,10 +55,17 @@ export class Bodega {
         return new Response('Cuenta de OneDrive conectada. Puedes volver a Inventario Web.',{headers:{'Content-Type':'text/plain;charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
       }
       const {subject,label,body}=await req.json(), path=new URL(req.url).pathname;
+      if(path==='/onedrive/pause'){
+        requireValue(subject===this.env.ADMIN_SUB&&typeof body.paused==='boolean','Acceso exclusivo del administrador.',403);
+        await this.ctx.storage.put('excel-paused',body.paused);
+        if(!body.paused)await this.wakeWorkbook();
+        return reply({paused:body.paused});
+      }
       if(path==='/onedrive/session'){
         requireValue(subject===this.env.ADMIN_SUB,'Acceso exclusivo del administrador.',403);
         requireValue(typeof body.token==='string'&&body.token.length>20,'Vuelve a iniciar sesión con Microsoft.');
-        return reply({message:await this.synchronize(body.token)});
+        if(await this.ctx.storage.get('excel-paused'))return reply({message:'Sincronización de Excel en pausa.',paused:true});
+        return reply({message:await this.synchronize(body.token),paused:false});
       }
       if(path==='/onedrive/status'){
         requireValue(subject===this.env.ADMIN_SUB,'Acceso exclusivo del administrador.',403);
@@ -81,20 +88,35 @@ export class Bodega {
         }
         requireValue(admin||member,'Cuenta sin acceso a esta bodega.',403);
         const user={subject,email:admin?this.env.ADMIN_EMAIL:member.email,role:admin?'admin':'operador'};
-        if(path==='/me'||path==='/join')return user;
+        if(path==='/me'||path==='/join'){
+          const expired=[...sql.exec('SELECT id FROM receipt_expiry WHERE expires<=? LIMIT 100',Date.now())];
+          for(const {id} of expired){sql.exec('DELETE FROM photos WHERE id=?',id);sql.exec('DELETE FROM receipt_expiry WHERE id=?',id)}
+          return {...user,cargo:db.first('SELECT cargo FROM staff WHERE email=?',user.email)?.cargo||''};
+        }
         if(path==='/changes'){
           const rows=[...sql.exec('SELECT seq,payload FROM events WHERE seq>? ORDER BY seq LIMIT 200',Number(body.after)||0)];
           return {anchor:db.first("SELECT value FROM config WHERE key='anchor'")?.value,rows:rows.map(r=>({seq:r.seq,event:{entryOrder:r.seq,...JSON.parse(r.payload)}})),name:db.first("SELECT value FROM config WHERE key='name'")?.value};
         }
-        if(path==='/photo'){return db.first('SELECT data FROM photos WHERE id=?',String(body.id))||{}}
+        if(path==='/photo'){return db.first('SELECT p.data,x.expires FROM photos p LEFT JOIN receipt_expiry x ON x.id=p.id WHERE p.id=? AND (x.expires IS NULL OR x.expires>?)',String(body.id),Date.now())||{}}
         if(path==='/event')return db.append(body,user);
+        if(path==='/guide-replace'){
+          requireValue(admin,'Acceso exclusivo del administrador.',403);
+          const batch=body.events;
+          requireValue(Array.isArray(batch)&&batch.length>=2&&batch.length<=200,'Guía inválida.');
+          const entries=batch.filter(e=>e.type==='entrada'),voids=batch.filter(e=>e.type==='anular');
+          requireValue(entries.length>0&&entries.length<=100&&voids.length>0&&voids.length<=100&&entries.length+voids.length===batch.length,'Guía inválida.');
+          requireValue(voids.every(e=>JSON.parse(db.first('SELECT payload FROM events WHERE id=?',String(e.data.target))?.payload||'{}').type==='entrada'),'Entrada inválida.');
+          return {events:[...entries,...voids].map(e=>db.append(e,user))};
+        }
         if(path==='/batch'){
           requireValue(Array.isArray(body.events)&&body.events.length>0&&body.events.length<=100,'Lote inválido.');
           return {events:body.events.map(e=>db.append(e,user))};
         }
         if(path==='/attachment'){
           requireValue(uuid(body.id)&&typeof body.data==='string'&&/^data:image\/jpeg;base64,[a-zA-Z0-9+/=]+$/.test(body.data),'Fotografía inválida.');
-          sql.exec('INSERT OR IGNORE INTO photos VALUES(?,?)',body.id,body.data);return {};
+          sql.exec('INSERT OR IGNORE INTO photos VALUES(?,?)',body.id,body.data);
+          if(db.first("SELECT value FROM config WHERE key='expireNewPhotos'")?.value==='1')sql.exec('INSERT OR IGNORE INTO receipt_expiry VALUES(?,?)',body.id,Date.now()+30*86400000);
+          return {expires:db.first('SELECT expires FROM receipt_expiry WHERE id=?',body.id)?.expires};
         }
         requireValue(admin,'Acceso exclusivo del administrador.',403);
         if(path==='/report-anchor'){
@@ -104,14 +126,16 @@ export class Bodega {
         if(path==='/name'){requireValue(typeof body.name==='string'&&body.name.length<=60,'Nombre inválido.');sql.exec('INSERT OR REPLACE INTO config VALUES(?,?)','name',body.name);return {}}
         if(path==='/photo-save'){requireValue(uuid(body.id)&&/^data:image\/jpeg;base64,[a-zA-Z0-9+/=]+$/.test(body.data),'Fotografía inválida.');sql.exec('INSERT OR IGNORE INTO photos VALUES(?,?)',body.id,body.data);return {}}
         if(path==='/import'){requireValue(Array.isArray(body.events)&&body.events.length<=100,'Lote inválido.');for(const e of body.events)db.append(e,user,true);return {}}
-        if(path==='/members')return {active:[...sql.exec('SELECT email FROM members ORDER BY email')],pending:[...sql.exec('SELECT email FROM invites ORDER BY email')]};
+        if(path==='/retention'){sql.exec("INSERT OR REPLACE INTO config VALUES('expireNewPhotos',?)",body.enabled===true?'1':'0');return {}}
+        if(path==='/members')return {expiry:db.first("SELECT value FROM config WHERE key='expireNewPhotos'")?.value==='1',active:[...sql.exec('SELECT m.email,s.cargo FROM members m LEFT JOIN staff s ON s.email=m.email ORDER BY m.email')],pending:[...sql.exec('SELECT i.email,s.cargo FROM invites i LEFT JOIN staff s ON s.email=i.email ORDER BY i.email')]};
         const address=String(body.email||'').trim().toLowerCase();
         requireValue(email(address)&&address!==this.env.ADMIN_EMAIL.toLowerCase(),'Correo inválido o reservado.');
+        if(path==='/cargo'){requireValue(typeof body.cargo==='string'&&body.cargo.length<=60,'Cargo inválido.');sql.exec('INSERT OR REPLACE INTO staff VALUES(?,?)',address,body.cargo.trim());return {}}
         if(path==='/invite'){requireValue(!db.first('SELECT email FROM members WHERE email=?',address),'Ya tiene acceso.',409);sql.exec('INSERT OR REPLACE INTO invites VALUES(?,?)',address,hash);return {code:secret}}
         if(path==='/remove'){sql.exec('DELETE FROM invites WHERE email=?',address);sql.exec('DELETE FROM members WHERE email=?',address);return {}}
         throw Object.assign(new Error('Ruta inexistente.'),{status:404});
       });
-      if(['/batch','/event','/import'].includes(path))this.ctx.waitUntil(this.wakeWorkbook());
+      if(['/batch','/event','/import','/guide-replace'].includes(path))this.ctx.waitUntil(this.wakeWorkbook());
       return reply(result);
     }catch(e){return reply({error:e.status?e.message:'No se pudo guardar la operación.'},e.status||400)}
   }

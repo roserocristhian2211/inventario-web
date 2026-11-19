@@ -72,3 +72,20 @@ test('una salida digitada después conserva su posición aunque sea de una fecha
  assert.ok(second.entryOrder>first.entryOrder);
  assert.equal(ledger.append(first,admin).entryOrder,first.entryOrder);
 });
+
+test('conteo de operador, traspaso porcentual y corrección de entrada conservan los saldos',()=>{
+ const db=new DatabaseSync(':memory:'),ledger=new Ledger({exec(s,...args){const q=db.prepare(s);return q.columns().length?q.all(...args):(q.run(...args),[])}});
+ const pid=randomUUID(),owner={subject:'owner',email:'owner@example.test',role:'admin'},operator={subject:'member',email:'member@example.test',role:'operador'};
+ const event=(type,data)=>({id:randomUUID(),date:'2026-11-18',type,data:{pid,...data}});
+ ledger.append(event('create',{code:'TEST',name:'Balanceado',cat:'directo',unit:'SC'}),owner);
+ const incoming=ledger.append(event('entrada',{q:10}),operator);
+ assert.equal(ledger.append(event('medicion',{physical:8}),operator).data.system,10);
+ const rule=event('reparto',{origin:'PRE01',from:'2026-11-01',to:'2026-11-18',targets:[{dest:'01',pct:100}]});
+ assert.throws(()=>ledger.append(rule,operator),/administrador/);
+ ledger.append(rule,owner);assert.equal(ledger.first('SELECT stock FROM products').stock,10e6);
+ assert.throws(()=>ledger.append(event('anular',{target:incoming.id}),operator),/administrador/);
+ const edited=ledger.append(event('entrada',{q:7,replaces:incoming.id}),owner);
+ ledger.append(event('anular',{target:incoming.id}),owner);
+ assert.equal(edited.data.actor,operator.email);assert.equal(edited.data.editedBy,owner.email);
+ assert.equal(ledger.first('SELECT stock FROM products').stock,7e6);
+});

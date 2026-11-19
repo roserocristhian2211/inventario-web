@@ -26,7 +26,7 @@ jobs:
         run: |
           npm ci --prefix report-tools
           mkdir public
-          cp index.html app.js reports.js team-config.js styles.css manifest.webmanifest icon.svg sw.js public/
+          cp index.html app.js direct.js consumption.js reports.js team-config.js styles.css manifest.webmanifest icon.svg sw.js public/
           report-tools/node_modules/.bin/esbuild report-tools/export.js --bundle --format=esm --minify --outfile=public/report-vendor.js
       - name: Preparar Pages
         uses: actions/configure-pages@v5

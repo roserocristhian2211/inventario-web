@@ -1,12 +1,13 @@
+export {exportSheets,readSheets,workbookBlob} from './excel.js';
 import {dailyPDF} from './daily.js';
 import {jsPDF} from 'jspdf';
 import {autoTable} from 'jspdf-autotable';
-import writeExcel from 'write-excel-file/universal';
+import {exportSheets as downloadWorkbook} from './excel.js';
 
-export function makePDF(report){
+export function makePDF(report,asFile=false){
   const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
   pdf.setProperties({title:report.title,author:report.author||'Inventario Web'});
-  if(report.daily)return dailyPDF(pdf,report);
+  if(report.daily)return dailyPDF(pdf,report,asFile);
   let y=17;
   pdf.setFontSize(18);pdf.text(report.title,12,y);y+=8;
   pdf.setFontSize(10);
@@ -18,11 +19,9 @@ export function makePDF(report){
     y=pdf.lastAutoTable.finalY+9;
   }
   for(let i=1;i<=pdf.getNumberOfPages();i++){pdf.setPage(i);pdf.setFontSize(8);pdf.text(i+' / '+pdf.getNumberOfPages(),281,203,{align:'right'})}
+  if(asFile)return new File([pdf.output('blob')],report.filename+'.pdf',{type:'application/pdf'});
   pdf.save(report.filename+'.pdf');
 }
 export async function makeExcel(report){
-  const section=report.sections[0];
-  const values=[...report.notes.map(n=>[n]),section.head,...section.rows];
-  const blob=await writeExcel(values.map((row,i)=>row.map(value=>({value,type:typeof value==='number'?Number:String,fontWeight:i===report.notes.length?'bold':undefined}))),{sheet:'Consumo',columns:section.head.map(h=>({width:h==='Producto'?65:18}))}).toBlob();
-  const a=document.createElement('a'),url=URL.createObjectURL(blob);a.href=url;a.download=report.filename+'.xlsx';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
+  await downloadWorkbook(report.filename,report.sections.map((s,i)=>({name:i===0?'Consumo':'Totales',rows:[...report.notes.map(n=>[n]),s.head,...s.rows]})));
 }

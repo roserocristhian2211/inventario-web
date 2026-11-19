@@ -1,7 +1,7 @@
 import {autoTable} from 'jspdf-autotable';
 import logos from './logos.json';
 
-export function dailyPDF(pdf,report){
+export function dailyPDF(pdf,report,asFile=false){
   const d=report.daily,s=report.sections[0],width=pdf.internal.pageSize.getWidth();
   const center=(text,x,y,size,rgb=[13,39,55])=>{pdf.setFont('helvetica','bold');pdf.setFontSize(size);pdf.setTextColor(...rgb);pdf.text(text,x,y,{align:'center'})};
   const heading=()=>{
@@ -29,5 +29,6 @@ export function dailyPDF(pdf,report){
     willDrawPage:heading,didParseCell:cell=>{if(cell.section==='body'&&cell.column.index===0)cell.cell.styles.textColor=[0,87,158];if(cell.section==='body'&&cell.column.index===2)cell.cell.styles.textColor=[145,24,129]}});
   const roles=['Bodega','Producción','Administración','Contabilidad'],labels=['Elaborado por','Revisado por','Aprobado por','Recibido por'];
   const y=194;roles.forEach((role,i)=>{const x=10+i*71.2;pdf.setDrawColor(30);pdf.line(x,y,x+63,y);center(labels[i]+': '+d.signers[i],x+31.5,y+3.8,d.signers[i].length>30?5:7);center(role,x+31.5,y+7.7,6.5)});
+  if(asFile)return new File([pdf.output('blob')],report.filename+'.pdf',{type:'application/pdf'});
   pdf.save(report.filename+'.pdf');
 }

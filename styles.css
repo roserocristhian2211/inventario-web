@@ -35,3 +35,9 @@ body{background:var(--bg);color:var(--fg)}.layout{display:block;min-height:100vh
 #report-dialog{width:min(52rem,96vw);max-height:90dvh;overflow:auto}#report-preview{min-width:0}
 .report-scroll{overflow:auto;max-height:35vh}.report-scroll table{border-collapse:collapse;width:100%}.report-scroll th,.report-scroll td{padding:.45rem;border-bottom:1px solid var(--line);text-align:left}
 #entry-lines fieldset{display:grid;gap:.4rem}#entry-lines fieldset:only-child button{display:none}
+
+#direct-dialog{width:min(55rem,96vw);padding:1.3rem;max-height:90dvh;overflow:auto}
+#direct-dialog form{display:grid;gap:.7rem}#direct-dialog .report-scroll{margin:.8rem 0}
+#direct-dialog .ponds{grid-template-columns:repeat(auto-fill,minmax(5rem,1fr))}
+#direct-dialog .ponds input{position:static;width:100%;opacity:1}
+.product-link{border:0;padding:0;background:transparent;color:inherit;font:inherit;text-align:left;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:.2em}
