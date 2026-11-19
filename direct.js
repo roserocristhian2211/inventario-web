@@ -55,8 +55,16 @@ export function installDirect(ctx){
   const {$,today,admin,products,events,moves,save,record,toast,fail}=ctx,dialog=$('#direct-dialog');
   const getProduct=id=>products().find(p=>p.id===id);
   const on=(id,fn)=>{const el=$(id);if(el)el.onclick=async()=>{if(el.disabled)return;el.disabled=true;try{await fn()}catch(e){fail(e)}finally{el.disabled=false}}};
-  function open(title,html){
-    dialog.innerHTML='<div class="modalhead"><h2>'+escape(title)+'</h2>'+button('direct-close','Cerrar')+'</div>'+html;
+  let parentView=null;
+  function open(title,html,nested=false){
+    parentView=nested&&dialog.open?{nodes:[...dialog.childNodes],scroll:dialog.scrollTop,focus:document.activeElement}:null;
+    dialog.innerHTML='<button type="button" class="back-link" id="direct-back"><span aria-hidden="true">←</span> Volver</button><div class="modalhead"><h2>'+escape(title)+'</h2>'+button('direct-close','Cerrar')+'</div>'+html;
+    on('#direct-back',()=>{
+      if(!parentView){dialog.close();return}
+      const {nodes,scroll,focus}=parentView;parentView=null;
+      dialog.replaceChildren(...nodes);focus?.focus({preventScroll:true});dialog.scrollTop=scroll;
+    });
+    dialog.scrollTop=0;
     on('#direct-close',()=>dialog.close());if(!dialog.open)dialog.showModal();
   }
   const select=(name,options)=>'<select name="'+name+'">'+options+'</select>';
@@ -86,7 +94,7 @@ export function installDirect(ctx){
     const history=directMoves().filter(m=>m.data.pid===p.id);
     const total=type=>history.filter(m=>m.type===type).reduce((n,m)=>n+m.q,0);
     open(p.name,'<p>'+escape(p.code)+' · '+escape(p.unit)+' · Mínimo '+num(p.min)+'</p>'+grid(['Inicio y ajustes','Entradas','Salidas','Saldo'],[[total('ajuste'),total('entrada'),total('salida'),p.stock]])+'<div class="actions">'+button('product-in','Entrada')+button('product-out','Salida')+'</div><h3>Historial reciente</h3>'+grid(['Fecha','Tipo','Cantidad','Documento / destino','Registrado por'],history.slice(0,30).map(m=>[m.date,m.type,m.q,m.data.doc||m.data.dest,m.data.actor])));
-    for(const [id,type] of [['#product-in','entrada'],['#product-out','salida']])on(id,()=>{dialog.close();ctx.openMove(p.id,type)});
+    for(const [id,type] of [['#product-in','entrada'],['#product-out','salida']])on(id,()=>{ctx.openMove(p.id,type)});
   }
   function movementView(m){
     const d=m.data,group=d.group?directMoves().filter(x=>x.data.group===d.group):[m];
@@ -97,7 +105,7 @@ export function installDirect(ctx){
   const isGuide=m=>m.type==='entrada'&&m.data.group;
   function guideForm(group){
     const first=group[0],options=current().map(p=>opt(p.id,p.code+' · '+p.name)).join('');
-    open('Modificar guía completa','<form>'+label('Guía o factura',input('doc','text',first.data.doc,'maxlength="75"'))+label('Fecha',input('date','date',first.date,'required'))+'<div id="guide-lines"></div>'+button('guide-add','Agregar producto')+button('guide-save','Guardar guía')+'</form>');
+    open('Modificar guía completa','<form>'+label('Guía o factura',input('doc','text',first.data.doc,'maxlength="75"'))+label('Fecha',input('date','date',first.date,'required'))+'<div id="guide-lines"></div>'+button('guide-add','Agregar producto')+button('guide-save','Guardar guía')+'</form>',true);
     function add(original){
       const parent=$('#guide-lines');if(parent.children.length>=100)return;
       const line=document.createElement('fieldset');line.dataset.original=original?.id||'';
@@ -121,7 +129,7 @@ export function installDirect(ctx){
   }
   function editMovement(m){
     const d=m.data,isIn=m.type==='entrada';
-    open('Modificar '+m.type,'<form>'+label('Producto',select('pid',current().map(p=>opt(p.id,p.code+' · '+p.name)).join('')))+label('Cantidad',input('q','number',m.q,'min="0.000001" step="any" required'))+label('Fecha',input('date','date',m.date,'required'))+(isIn?label('Guía',input('doc','text',d.doc,'maxlength="75"')):label('Destino',select('dest',[...new Set([...destinations,d.dest].filter(Boolean))].map(v=>opt(v)).join(''))))+label('Observación',input('note','text',d.note,'maxlength="180"'))+button('edit-commit','Guardar corrección')+'</form>');
+    open('Modificar '+m.type,'<form>'+label('Producto',select('pid',current().map(p=>opt(p.id,p.code+' · '+p.name)).join('')))+label('Cantidad',input('q','number',m.q,'min="0.000001" step="any" required'))+label('Fecha',input('date','date',m.date,'required'))+(isIn?label('Guía',input('doc','text',d.doc,'maxlength="75"')):label('Destino',select('dest',[...new Set([...destinations,d.dest].filter(Boolean))].map(v=>opt(v)).join(''))))+label('Observación',input('note','text',d.note,'maxlength="180"'))+button('edit-commit','Guardar corrección')+'</form>',true);
     dialog.querySelector('[name=pid]').value=d.pid;if(!isIn)dialog.querySelector('[name=dest]').value=d.dest;
     let batch,key;
     on('#edit-commit',async()=>{if(!dialog.querySelector('form').reportValidity())return;const f=Object.fromEntries(controls()),signature=JSON.stringify(f);
@@ -144,7 +152,7 @@ export function installDirect(ctx){
   }
   function transferForm(){
     const choices=destinations.map(d=>opt(d)).join('');
-    open('Traspaso de consumo','<form>'+label('Origen',select('origin',choices))+label('Consumo desde',input('from','date',today().slice(0,7)+'-01','required'))+label('Consumo hasta',input('to','date',today(),'required'))+label('Fecha de traspaso',input('when','date',today(),'required'))+'<fieldset><legend>Porcentaje por destino</legend><div class="ponds">'+destinations.map(d=>label(d,input(d,'number','','min="0" max="100" step="any"'))).join('')+'</div></fieldset><output id="transfer-total"></output>'+label('Nota',input('note','text','','maxlength="180"'))+button('transfer-save','Guardar traspaso')+'</form>');
+    open('Traspaso de consumo','<form>'+label('Origen',select('origin',choices))+label('Consumo desde',input('from','date',today().slice(0,7)+'-01','required'))+label('Consumo hasta',input('to','date',today(),'required'))+label('Fecha de traspaso',input('when','date',today(),'required'))+'<fieldset><legend>Porcentaje por destino</legend><div class="ponds">'+destinations.map(d=>label(d,input(d,'number','','min="0" max="100" step="any"'))).join('')+'</div></fieldset><output id="transfer-total"></output>'+label('Nota',input('note','text','','maxlength="180"'))+button('transfer-save','Guardar traspaso')+'</form>',true);
     function values(){const f=Object.fromEntries(controls());const targets=destinations.map(dest=>({dest,pct:Number(f[dest])})).filter(t=>t.pct>0);return {f,targets,sum:targets.reduce((s,t)=>s+t.pct,0)}}
     const paint=()=>{$('#transfer-total').textContent='Total asignado: '+num(values().sum)+'%'};dialog.querySelector('form').oninput=paint;paint();
     let pending,key;

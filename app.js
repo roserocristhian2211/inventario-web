@@ -1,7 +1,7 @@
-import {installDirect,pondRows} from './direct.js?v=14';
+import {installDirect,pondRows} from './direct.js?v=15';
 import {installImport,planInventoryImport} from './consumption.js?v=12';
 let refreshCounts,moveLimit=80;
-import {setupReportUI,familyOf,compareProducts,destinations} from './reports.js?v=14';
+import {setupReportUI,familyOf,compareProducts,destinations} from './reports.js?v=15';
 import {TEAM_API} from './team-config.js?v=6';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -200,7 +200,11 @@ $('#sync-now').disabled=busy||!navigator.onLine||!session;
 $('#alert').classList.toggle('hidden',!alerts.length);$('#alert').textContent=alerts.slice(0,5).join(' · ');
 $('#cloud-msg').textContent=TEAM_API?'Bodega compartida · Última actualización: '+(settings.lastSync||'pendiente'):events.filter(e=>!e.synced).length+' operaciones sin publicar en OneDrive. Última sincronización: '+(settings.lastSync||'nunca');
 }
-function show(id){page=id;window.scrollTo(0,0);$$('.page').forEach(el=>el.classList.toggle('hidden',el.id!=='p-'+id));$$('.navitem').forEach(el=>el.classList.toggle('on',el.dataset.page===id));render()}
+const visitedPages=[];
+function show(id,back=false){
+  if(id!==page&&!back)visitedPages.push({page,scroll:window.scrollY});
+  page=id;$('#page-back').hidden=!visitedPages.length;
+  window.scrollTo(0,0);$$('.page').forEach(el=>el.classList.toggle('hidden',el.id!=='p-'+id));$$('.navitem').forEach(el=>el.classList.toggle('on',el.dataset.page===id));render()}
 const field=(lab,name,val='',type='text',extra='')=>'<label>'+lab+'<input name="'+name+'" type="'+type+'" value="'+esc(val)+'" '+extra+'></label>';
 const select=(lab,name,opts,selected)=>'<label>'+lab+'<select name="'+name+'">'+opts.map(([v,t])=>'<option value="'+esc(v)+'" '+(v===selected?'selected':'')+'>'+esc(t)+'</option>').join('')+'</select></label>';
 function openEditor(kind,pid=null,initial='entrada'){let p=inventory.find(x=>x.id===pid);editor={kind,pid,expected:p?.stock};let h='';
@@ -223,7 +227,7 @@ if(!pid&&opening>0)batch.push(record('ajuste',{pid:productId,q:opening,expected:
 await saveBatch(batch);await reload()}
 if(kind==='movimiento'){await submitMovement(f);await reload()}
 if(kind==='conteo'){let p=active().find(x=>x.id===pid),q=number(v('q'));if(!p||q<0)throw Error('La cantidad no puede ser negativa.');await saveEvent('ajuste',{pid,q:q-(TEAM_API?editor.expected:p.stock),expected:editor.expected,note:v('note'),doc:'CONTEO'})}
-$('#modal').close();if(kind!=='movimiento'||v('type')==='traspaso')toast(TEAM_API?'Registro confirmado en la bodega.':'Registro guardado en este dispositivo.');scheduleSync()}catch(err){fail(err)}finally{submit.disabled=false}}
+$('#modal').close();if(kind==='movimiento'&&$('#direct-dialog').open)$('#direct-dialog').close();if(kind!=='movimiento'||v('type')==='traspaso')toast(TEAM_API?'Registro confirmado en la bodega.':'Registro guardado en este dispositivo.');scheduleSync()}catch(err){fail(err)}finally{submit.disabled=false}}
 async function exportJSON(){let json=JSON.stringify({format:'inventario-web-independent-v1',fecha:new Date().toISOString(),events,photos},null,2);download('respaldo-inventario-'+today()+'.json',json,'application/json')}
 function download(name,body,type){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([body],{type}));a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),3000)}
 function csvEscape(x){let s=String(x??'');return /[;"\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}
@@ -293,6 +297,14 @@ const references=new Set(local.flatMap(x=>[x.data.photo,...(x.data.attachments||
 for(const p of remotePhotos){if(!/^[0-9a-f-]{36}\.jpg$/i.test(p.name))continue;let id=p.name.slice(0,-4);if(!references.has(id)||await one('photos',id))continue;let resp=await graph('/me/drive/items/'+enc(p.id)+'/content'),blob=await resp.blob(),data=await new Promise((yes,no)=>{let r=new FileReader();r.onload=()=>yes(r.result);r.onerror=()=>no(r.error);r.readAsDataURL(blob)});await put('photos',{id,data,synced:true})}
 const previousSync=settings.lastSync;await setting('lastSync',new Date().toISOString());await reload();toast('Sincronización completa: '+received+' recibidos, '+sent+' publicados.');if(previousSync)for(const event of newMoves){const product=active().find(p=>p.id===event.data.pid);if(product)notifyMove(event,product)}}finally{busy=false;render()}}
 function setup(){
+  $('#page-back').onclick=()=>{
+    const previous=visitedPages.pop();if(!previous)return;
+    show(previous.page,true);window.scrollTo(0,previous.scroll);
+  };
+  document.addEventListener('click',e=>{
+    const back=e.target.closest('[data-back]');
+    if(back)back.closest('dialog').close();
+  });
   // This display is informational. The Worker independently verifies the signature and subject.
   try{
     const part=session.id_token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
