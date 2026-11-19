@@ -41,3 +41,123 @@ body{background:var(--bg);color:var(--fg)}.layout{display:block;min-height:100vh
 #direct-dialog .ponds{grid-template-columns:repeat(auto-fill,minmax(5rem,1fr))}
 #direct-dialog .ponds input{position:static;width:100%;opacity:1}
 .product-link{border:0;padding:0;background:transparent;color:inherit;font:inherit;text-align:left;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:.2em}
+
+/* Shared command sheets for inventory tasks */
+:root {
+  --sheet: #142220;
+  --control: #1c302c;
+  --control-line: #384c48;
+  --action: #17766f;
+  --stock-band: #203a37;
+}
+:root.light {
+  --sheet: #f2f5fa;
+  --control: #fff;
+  --control-line: #d4dee5;
+  --action: #147572;
+  --stock-band: #deeeee;
+}
+:is(#modal,#report-dialog,#direct-dialog) {
+  background: var(--sheet);
+  border: 1px solid var(--control-line);
+  border-radius: 20px;
+  box-shadow: 0 20px 80px #00121e38;
+  color: var(--fg);
+}
+dialog::backdrop {background: rgb(9 22 32 / 48%)}
+:is(#editor,#report-dialog form,#direct-dialog) {padding: 18px}
+:is(#editor,#report-dialog,#direct-dialog) .modalhead {
+  margin: 0 0 14px;
+  min-height: 34px;
+}
+.modalhead :is(h2,h3) {margin: 0; font-size: 19px; line-height: 1.25}
+.modalhead button {border: 0; border-radius: 9px; color: var(--muted); background: transparent; min-height: 36px; padding: 4px 10px}
+#editor #fields label,#direct-dialog form label,#report-dialog label {
+  display: grid; gap: 5px; min-width: 0; margin: 0;
+  color: var(--muted); font-size: 13px; font-weight: 650;
+}
+:is(#editor,#direct-dialog,#report-dialog) :is(input:not([type=file],[type=checkbox],[type=radio]),select) {
+  background: var(--control); border: 1px solid var(--control-line); border-radius: 10px;
+  width: 100%; min-width: 0; min-height: 44px; font-size: 16px; font-weight: 400;
+}
+:is(input,select):focus-visible {outline: 2px solid var(--action); outline-offset: 1px}
+#fields,#report-options,#movement-fields {display: grid; gap: 12px}
+#movement-fields,#report-options,#modal[data-editor=producto] #fields {grid-template-columns: repeat(2,minmax(0,1fr))}
+:where(#movement-fields,#report-options,#modal[data-editor=producto] #fields) > * {grid-column: 1 / -1; min-width: 0}
+#movement-fields > label:has([name=date],[name=doc],[name=q]),
+#modal[data-editor=producto] #fields > label:has([name=unit],[name=opening]),
+#report-options > label:has([name=date],[name=author],[name=month],[name=from],[name=to]) {grid-column: auto}
+#movement-fields:not([data-kind=entrada]) > label:has([name=product]) {order: -3}
+#stock-preview {order: -2}
+#movement-fields:not([data-kind=entrada]) > label:has([name=date]) {order: 0; grid-column: 2; grid-row: 3}
+#movement-fields:not([data-kind=entrada]) > label:has([name=q]) {grid-column: 1; grid-row: 3}
+:is(#editor,#report-dialog) details {font-size: 13px; color: var(--muted)}
+:is(#editor,#report-dialog) summary {cursor: pointer; padding: 7px 0}
+#fields details[open] > label,#report-options details[open] > label {margin: 8px 0}
+.switchbar {
+  display: flex; padding: 4px; gap: 4px; border: 1px solid var(--control-line);
+  border-radius: 12px; background: var(--control);
+}
+#fields .switchbar label,#report-dialog .switchbar label {position: relative; flex: 1; display: grid}
+.switchbar input,.photo-picks input {position: absolute; width: 1px; height: 1px; opacity: 0}
+.switchbar span {display: grid; place-items: center; border-radius: 8px; padding: 9px 3px; text-align: center; cursor: pointer; line-height: 1.2}
+.switchbar input:checked + span {background: var(--action); color: white}
+.switchbar input:focus-visible + span,.photo-picks label:focus-within {outline: 2px solid var(--accent); outline-offset: 1px}
+#entry-lines {counter-reset: line}
+#entry-lines fieldset,.movement-card {
+  margin: 0; padding: 12px; background: var(--control); border: 1px solid var(--control-line);
+  border-radius: 13px; box-shadow: 0 2px 5px #1028380d;
+}
+#entry-lines fieldset {counter-increment: line; grid-template-columns: 22px 1fr; align-items: center}
+#entry-lines fieldset::before {content: counter(line); font-weight: bold; color: var(--muted); align-self: end; padding-bottom: 10px}
+#entry-lines fieldset > :not(:first-child) {grid-column: 2}
+#entry-lines [name=q] {max-width: 180px}
+#entry-lines output,.photo-picks small {font-size: 12px; font-weight: 450; color: var(--muted)}
+#add-line,.photo-picks label {background: var(--control); text-align: center; border-radius: 10px; padding: 10px; border: 1px solid var(--control-line); font-weight: 650; min-height: 42px}
+.photo-picks {display: grid; grid-template-columns: 1fr 1fr; gap: 6px}
+.photo-picks strong {grid-column: span 2; font-size: 13px; color: var(--muted)}
+#fields .photo-picks label {position: relative; cursor: pointer; place-items: center; border-style: dashed; color: var(--fg)}
+#movement-fields > fieldset,.filter-switch {margin: 0; border: 0; padding: 0; min-width: 0}
+#movement-fields > fieldset :is(legend,strong),.filter-switch legend {font-size: 13px; color: var(--muted)}
+#movement-fields .ponds {display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 12px}
+#fields .ponds label {display: block}
+#movement-fields .ponds span {background: var(--control); min-width: 40px; padding: 8px; font-size: 12px; border-color: var(--control-line)}
+#movement-fields .ponds input:checked + span {background: var(--action); color: white}
+#movement-fields .note {margin: 0; background: var(--stock-band); border-radius: 9px; padding: 9px 12px; font-size: 13px}
+#movement-fields :is(.note,output,#files-picked):empty {display: none}
+#editor .actions.end {display: grid; grid-template-columns: auto 1fr; margin-bottom: 0}
+:is(#editor,#report-dialog,#direct-dialog) .btn {border-radius: 10px; min-height: 44px; white-space: normal}
+#editor [type=submit],#report-pdf {background: var(--action); border-color: var(--action)}
+#report-options {margin: 14px 0}
+#report-options label:has(> input[type=checkbox]) {display: flex; align-items: center}
+#report-preview h3,.movement-card h3 {font-size: 16px; margin: 8px 0}
+.report-scroll {border: 1px solid var(--control-line); border-radius: 10px; background: var(--control)}
+.report-scroll th {background: var(--sheet); position: sticky; top: 0}
+#report-dialog .actions > button,#direct-dialog .actions > button {flex: 1}
+#movement-remove {background: #fbe7e5; color: #962b26; border-color: #edc9c5}
+.move-amount {display: block; font-size: 22px; color: var(--accent)}
+.move-amount.dispatch {color: #ce651f}
+.movement-card p {color: var(--muted); margin: 4px 0; font-size: 13px}
+.movement-card p:last-child {border-top: 1px solid var(--control-line); padding-top: 9px; margin-top: 9px}
+@media (max-width: 650px) {
+  :is(#modal,#report-dialog,#direct-dialog) {
+    inset: auto 0 0; margin: 0; width: 100%; max-width: 100%;
+    max-height: 94dvh; border-radius: 21px 21px 0 0; overflow: auto;
+    padding-bottom: max(12px,env(safe-area-inset-bottom));
+  }
+  :is(#modal,#report-dialog,#direct-dialog)::before {content: ''; display: block; width: 42px; height: 4px; margin: 8px auto 0; border-radius: 4px; background: var(--control-line)}
+  #editor #cancel {display: none}
+  #editor .actions.end {grid-template-columns: 1fr}
+  #editor,#report-dialog form {max-height: none; overflow: visible; padding: 8px 13px}
+  #direct-dialog {padding: 0 13px 15px}
+  #direct-dialog .modalhead {margin-top: 8px}
+  #report-dialog .actions {display: grid; grid-template-columns: repeat(auto-fit,minmax(110px,1fr))}
+}
+@media (max-width: 650px) {
+  #editor .actions.end {
+    position: sticky; bottom: 0; z-index: 1; margin: 8px -4px 0;
+    padding: 8px 4px 3px; background: var(--sheet);
+    box-shadow: 0 -5px 9px var(--sheet);
+  }
+  #editor {scroll-padding-bottom: 64px}
+}

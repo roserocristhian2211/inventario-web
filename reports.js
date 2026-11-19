@@ -114,6 +114,7 @@ export function setupReportUI(ctx){
     function options(){
       const kind=$('#report-kind').value,author='<label>Elaborado por<input name="author" value="CRISTHIAN ROSERO" maxlength="80"></label>';
       const dates=(label,key,value,type='date')=>'<label>'+label+'<input type="'+type+'" name="'+key+'" value="'+esc(value)+'"></label>';
+      const segments=(title,name,choices)=>'<fieldset class="filter-switch"><legend>'+title+'</legend><div class="switchbar">'+choices.map(([key,label],i)=>'<label><input type="radio" name="'+name+'" value="'+key+'" '+(i===0?'checked':'')+'><span>'+label+'</span></label>').join('')+'</div></fieldset>';
       let html='';
       if(kind==='daily'){
         html=dates('Fecha','date',date)+author+'<details><summary>Responsables del reporte</summary>'+[['reviewed','Revisado por · Producción'],['approved','Aprobado por · Administración'],['received','Recibido por · Contabilidad']].map(([key,label])=>'<label>'+label+'<input name="'+key+'" maxlength="64" value="'+esc(localStorage.getItem('iw-report-'+key)||'')+'"></label>').join('')+'</details>';
@@ -121,9 +122,9 @@ export function setupReportUI(ctx){
       }else if(kind==='kpi')html=dates('Mes','month',month,'month')+author;
       else if(kind==='range'){
         const extra=[...new Set(ctx.moves().filter(m=>m.type==='salida').map(place))].filter(d=>!destinations.includes(d));
-        html=dates('Desde','from',month+'-01')+dates('Hasta','to',date)+'<label>Agrupar por<select name="group">'+opt('product','Producto')+opt('dest','Piscina / precría')+'</select></label><label>Grupo<select name="family">'+opt('','Todos')+opt('balanceado','Balanceado')+opt('insumo','Insumos')+'</select></label><label>Destino<select name="destination">'+opt('','Todos')+[...destinations,...extra].map(d=>opt(d)).join('')+'</select></label><label><input type="checkbox" name="allocated"> Aplicar traspasos de consumo</label>';
+        html=dates('Desde','from',month+'-01')+dates('Hasta','to',date)+segments('Agrupar por','group',[['product','Producto'],['dest','Piscina / precría']])+segments('Grupo','family',[['','Todo'],['balanceado','Balanceado'],['insumo','Insumos']])+'<label>Destino<select name="destination">'+opt('','Todos')+[...destinations,...extra].map(d=>opt(d)).join('')+'</select></label><label><input type="checkbox" name="allocated"> Aplicar traspasos de consumo</label>';
       }
-      $('#report-options').innerHTML=html;$('#report-xlsx').hidden=kind!=='range';
+      $('#report-options').innerHTML=html;$('#report-pdf').textContent={daily:'Descargar PDF de consumos diarios',range:'Descargar PDF',saldo:'Descargar PDF de saldos',kpi:'Generar PDF de KPI'}[kind];$('#report-xlsx').hidden=kind!=='range';
       if($('#anchor-save'))$('#anchor-save').onclick=async()=>{try{const f=dialog.querySelector('form').elements,date=f.anchorDate.value,number=Number(f.anchorNumber.value);if(!date||!Number.isSafeInteger(number)||number<1)throw Error('Indica fecha y número del último reporte.');await ctx.saveAnchor({date,number});preview()}catch(e){ctx.fail(e)}};
       preview();
     }

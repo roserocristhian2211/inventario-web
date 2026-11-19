@@ -1,7 +1,7 @@
-import {installDirect,pondRows} from './direct.js?v=12';
+import {installDirect,pondRows} from './direct.js?v=14';
 import {installImport,planInventoryImport} from './consumption.js?v=12';
 let refreshCounts,moveLimit=80;
-import {setupReportUI,familyOf,compareProducts,destinations} from './reports.js?v=12';
+import {setupReportUI,familyOf,compareProducts,destinations} from './reports.js?v=14';
 import {TEAM_API} from './team-config.js?v=6';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -205,12 +205,12 @@ const field=(lab,name,val='',type='text',extra='')=>'<label>'+lab+'<input name="
 const select=(lab,name,opts,selected)=>'<label>'+lab+'<select name="'+name+'">'+opts.map(([v,t])=>'<option value="'+esc(v)+'" '+(v===selected?'selected':'')+'>'+esc(t)+'</option>').join('')+'</select></label>';
 function openEditor(kind,pid=null,initial='entrada'){let p=inventory.find(x=>x.id===pid);editor={kind,pid,expected:p?.stock};let h='';
 if(kind==='producto'){$('#modal-title').textContent=p?'Editar producto':'Nuevo producto';h+=field('Código','code',p?.code||'','text','required maxlength="35"')+field('Descripción','name',p?.name||'','text','required maxlength="160"');h+=select('Medida','unit',[...new Set(['SC','KG','LT','UND','CJ','PZ','GL','M',...(p?[p.unit]:[])])].map(x=>[x,x]),p?.unit||'SC');
-h+=select('Grupo','family',[['balanceado','Balanceado'],['insumo','Insumo']],p?familyOf(p):'insumo')+field('Libras por saco de balanceado (opcional)','lbs',p?.lbPerSack||'','number','min="0.000001" step="any"');
-if(!p)h+=field('Inventario inicial','opening',0,'number','required min="0" step="any"');h+=field('Existencia mínima','min',p?.min??0,'number','required min="0" step="any"');h+='<label>Fotografía (opcional)<input type="file" name="picture" accept="image/jpeg,image/png,image/webp"></label>'}
-if(kind==='movimiento'){if(!active().length){toast('Primero agrega un producto.',true);return}$('#modal-title').textContent='Registrar movimiento';h+=select('Tipo de movimiento','type',[['entrada','Entrada'],['salida','Salida'],...(canManage()?[['traspaso','Traspaso']]:[])],initial)+'<div id="movement-fields"></div>'}
+if(!p)h+=field('Inventario inicial','opening',0,'number','required min="0" step="any"');h+='<details class="product-options" '+(p?'open':'')+'><summary>Más opciones del producto</summary>'+select('Grupo','family',[['balanceado','Balanceado'],['insumo','Insumo']],p?familyOf(p):'insumo')+field('Libras por saco de balanceado (opcional)','lbs',p?.lbPerSack||'','number','min="0.000001" step="any"');
+h+=field('Existencia mínima','min',p?.min??0,'number','required min="0" step="any"');h+='<label>Fotografía (opcional)<input type="file" name="picture" accept="image/jpeg,image/png,image/webp"></label></details>'}
+if(kind==='movimiento'){if(!active().length){toast('Primero agrega un producto.',true);return}$('#modal-title').textContent='Registrar movimiento';h+='<div class="switchbar" role="radiogroup" aria-label="Tipo de movimiento">'+[['entrada','Entrada'],['salida','Salida'],...(canManage()?[['traspaso','Traspaso']]:[])].map(([key,label])=>'<label><input type="radio" name="type" value="'+key+'" '+(key===initial?'checked':'')+'><span>'+label+'</span></label>').join('')+'</div>'+'<div id="movement-fields"></div>'}
 
 if(kind==='conteo'){if(!p)return;$('#modal-title').textContent='Conteo físico';h+='<div class="note">'+esc(p.name)+' · Existencia: '+fmt(p.stock)+' '+esc(p.unit)+'</div>'+field('Cantidad encontrada','q',p.stock,'number','required min="0" step="any"')+field('Observación','note','Conteo físico','text','maxlength="180"')}
-$('#fields').innerHTML=h;if(kind==='movimiento'){drawMovement(initial,pid);$('#fields select[name="type"]').onchange=e=>drawMovement(e.target.value,pid)}$('#modal').showModal()}
+$('#modal').dataset.editor=kind;$('#fields').innerHTML=h;if(kind==='movimiento'){drawMovement(initial,pid);$('#fields .switchbar').onchange=e=>drawMovement(e.target.value,pid)}$('#modal').showModal()}
 async function imageData(file,caption=[]){if(file.size>10*1024*1024)throw Error('Imagen demasiado grande (máximo 10 MB).');if(!['image/png','image/jpeg','image/webp'].includes(file.type))throw Error('Formato de imagen inválido.');let bitmap=await createImageBitmap(file);let scale=Math.min(1,1200/Math.max(bitmap.width,bitmap.height));let can=document.createElement('canvas');can.width=Math.round(bitmap.width*scale);const h=Math.round(bitmap.height*scale),font=Math.max(11,Math.round(can.width/50)),maxChars=Math.max(15,Math.floor(can.width/(font*.62)));
 const lines=caption.flatMap(s=>String(s).match(new RegExp('.{1,'+maxChars+'}','gu'))||[]);can.height=h+(lines.length?(lines.length+1)*(font+4):0);const g=can.getContext('2d');g.drawImage(bitmap,0,0,can.width,h);
 if(lines.length){g.fillStyle='#102b29';g.fillRect(0,h,can.width,can.height-h);g.fillStyle='white';g.font=font+'px sans-serif';lines.forEach((s,i)=>g.fillText(s,4,h+(i+1)*(font+4),can.width-8))}bitmap.close();return can.toDataURL('image/jpeg',.75)}
@@ -425,25 +425,26 @@ async function persistBatch(batch){
 }
 function drawMovement(type,pid){
   const area=$('#movement-fields'),list=active(),selected=list.find(x=>x.id===pid);
+  area.dataset.kind=type;
   const options=list.map(p=>'<option value="'+esc(p.code+' · '+p.name)+'"></option>').join('');
   const product=(pre)=>'<label>Producto<input list="catalog-options" name="product" placeholder="Buscar por nombre o código" value="'+esc(pre?pre.code+' · '+pre.name:'')+'" required></label>';
   const quantity=()=>field('Cantidad','q','','number','min="0.000001" step="any" required');
   area.innerHTML='<datalist id="catalog-options">'+options+'</datalist>'+field('Fecha','date',today(),'date','required');
   if(type==='entrada'){
-    area.insertAdjacentHTML('beforeend',field('Número de documento (guía o factura)','doc','','text','maxlength="75"')+'<div id="entry-lines"></div><button type="button" id="add-line" class="small">+ Agregar otro producto</button><label>Tomar foto<input type="file" accept="image/*" capture="environment" name="camera"></label><label>Galería (hasta 10 fotos en total)<input type="file" accept="image/jpeg,image/png,image/webp" multiple name="gallery"></label>');
+    area.insertAdjacentHTML('beforeend',field('Número de documento (guía o factura)','doc','','text','maxlength="75"')+'<div id="entry-lines"></div><button type="button" id="add-line" class="small">+ Agregar otro producto</button><div class="photo-picks"><strong>Fotos <small>(opcional · hasta 10)</small></strong><label>Tomar foto<input type="file" accept="image/*" capture="environment" name="camera"></label><label>Galería<input type="file" accept="image/jpeg,image/png,image/webp" multiple name="gallery"></label></div>');
     editor.files=[];const picks=document.createElement('div');picks.id='files-picked';area.appendChild(picks);
     const paintFiles=()=>{picks.replaceChildren();editor.files.forEach((file,i)=>{const b=document.createElement('button');b.type='button';b.className='small';b.textContent=file.name+' · Quitar';b.onclick=()=>{editor.files.splice(i,1);paintFiles()};picks.appendChild(b)})};
     for(const el of area.querySelectorAll('input[type=file]'))el.onchange=()=>{const files=[...el.files];el.value='';if(files.length+editor.files.length>10){toast('Selecciona hasta diez fotos.',true);return}editor.files.push(...files);paintFiles()};
     const add=()=>{const rows=$('#entry-lines');if(rows.children.length>=100)return;const row=document.createElement('fieldset');row.innerHTML=product(rows.children.length?null:selected)+quantity()+'<output class="line-stock"></output><button type="button" class="small">Quitar</button>';rows.append(row);row.querySelector('button').onclick=()=>{if(rows.children.length>1)row.remove();$('#add-line').disabled=false};$('#add-line').disabled=rows.children.length>=100};
     $('#add-line').onclick=add;add();
   }else{
-    area.insertAdjacentHTML('beforeend',product(selected)+quantity()+(type==='traspaso'?field('Origen','origin','','text','required maxlength="80"'):'')+'<fieldset><legend>Destino obligatorio</legend>'+['Piscinas','Precrías'].map((label,i)=>'<strong>'+label+'</strong><div class="ponds">'+destinations.filter(x=>x.startsWith('PRE')===!!i).map(d=>'<label><input type="radio" name="dest" value="'+d+'" required><span>'+d+'</span></label>').join('')+'</div>').join('')+'</fieldset><p id="balance-preview" class="note"></p>');
-    const preview=()=>{const p=findProduct(area.querySelector('[name=product]').value),q=Number(area.querySelector('[name=q]').value);$('#balance-preview').textContent=p?'Stock actual: '+fmt(p.stock)+' '+p.unit+(type==='salida'&&q>0?' · Quedará en '+fmt(p.stock-q)+' '+p.unit:''):''};
+    area.insertAdjacentHTML('beforeend',product(selected)+'<p id="stock-preview" class="note"></p>'+quantity()+(type==='traspaso'?field('Origen','origin','','text','required maxlength="80"'):'')+'<fieldset><legend>Destino obligatorio</legend>'+['Piscina (PSC)','Precría (PRE)'].map((label,i)=>'<strong>'+label+'</strong><div class="ponds">'+destinations.filter(x=>x.startsWith('PRE')===!!i).map(d=>'<label><input type="radio" name="dest" value="'+d+'" required><span>'+d+'</span></label>').join('')+'</div>').join('')+'</fieldset><p id="balance-preview" class="note"></p>');
+    const preview=()=>{const p=findProduct(area.querySelector('[name=product]').value),q=Number(area.querySelector('[name=q]').value);$('#stock-preview').textContent=p?'Stock actual: '+fmt(p.stock)+' '+p.unit:'';$('#balance-preview').textContent=p&&type==='salida'&&q>0?'Quedará en '+fmt(p.stock-q)+' '+p.unit:''};
     area.oninput=preview;preview();
   }
   if(type==='entrada')area.oninput=()=>{const totals=new Map();for(const row of area.querySelectorAll('#entry-lines fieldset')){const p=findProduct(row.querySelector('[name=product]').value),out=row.querySelector('output');if(!p){out.textContent='';continue}const q=Number(row.querySelector('[name=q]').value)||0;totals.set(p.id,(totals.get(p.id)||0)+q);out.textContent='Stock: '+fmt(p.stock)+' '+p.unit+' · Con el ingreso: '+fmt(p.stock+totals.get(p.id))+' '+p.unit}};
 
-  area.insertAdjacentHTML('beforeend',field('Observaciones','note','','text','maxlength="180"'));
+  area.insertAdjacentHTML('beforeend','<details><summary>Observaciones</summary>'+field('Observación','note','','text','maxlength="180"')+'</details>');
 }
 function findProduct(value){return active().find(p=>[p.code,p.code+' · '+p.name].some(s=>s.toLowerCase()===value.trim().toLowerCase()))}
 async function submitMovement(form){
