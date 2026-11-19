@@ -124,16 +124,14 @@ function setupTeam(){
   $('#expiry-new').onchange=async e=>{const enabled=e.target.checked;try{await teamCall('/retention',{enabled})}catch(err){e.target.checked=!enabled;fail(err)}};
   $('#pause-workbook').onclick=async e=>{try{const paused=e.target.dataset.paused!=='true';await teamCall('/onedrive/pause',{paused});await checkWorkbook(true)}catch(err){fail(err)}};
 
-  $('#settings-link').addEventListener('click',()=>checkWorkbook());
   $('#workbook-check').onclick=()=>checkWorkbook(true);
   $('#onedrive-connect').onclick=async()=>{try{
     const result=await teamCall('/onedrive/start');
     location.assign(result.url);
   }catch(error){fail(error)}};
   $('#team-recover').onclick=()=>recoverPersonalInventory().catch(fail);
-  $('#team-tools').hidden=!canManage();$('#book-file').closest('label').hidden=$('#book-drive').hidden=!canManage();
+  $('#book-file').closest('label').hidden=$('#book-drive').hidden=!canManage();
   for(const el of $$('[data-action="producto"],#import-csv,#name,#save-name')){if(!canManage())(el.closest('label')||el).hidden=true}
-  $('#settings-link').addEventListener('click',()=>{if(canManage())listMembers().catch(fail)});
   $('#invite-form').onsubmit=async e=>{
     e.preventDefault();
     try{const {code}=await teamCall('/invite',{email:$('#member-email').value});
@@ -318,6 +316,41 @@ for(const e of local){if(ids.has(e.id))continue;await up(evFolder.id,e.id+'.json
 const references=new Set(local.flatMap(x=>[x.data.photo,...(x.data.attachments||[])]).filter(Boolean));let localPhotos=await all('photos');for(const p of localPhotos){if(!references.has(p.id))continue;if(names.has(p.id+'.jpg'))continue;let res=await fetch(p.data),blob=await res.blob();await up(phFolder.id,p.id+'.jpg',blob,'image/jpeg');await put('photos',{...p,synced:true})}
 for(const p of remotePhotos){if(!/^[0-9a-f-]{36}\.jpg$/i.test(p.name))continue;let id=p.name.slice(0,-4);if(!references.has(id)||await one('photos',id))continue;let resp=await graph('/me/drive/items/'+enc(p.id)+'/content'),blob=await resp.blob(),data=await new Promise((yes,no)=>{let r=new FileReader();r.onload=()=>yes(r.result);r.onerror=()=>no(r.error);r.readAsDataURL(blob)});await put('photos',{id,data,synced:true})}
 const previousSync=settings.lastSync;await setting('lastSync',new Date().toISOString());await reload();toast('Sincronización completa: '+received+' recibidos, '+sent+' publicados.');if(previousSync)for(const event of newMoves){const product=active().find(p=>p.id===event.data.pid);if(product)notifyMove(event,product)}}finally{busy=false;render()}}
+function setupSettingsMenu(){
+  const drawer=$('#settings-drawer');
+  const modules=Array.from(drawer.querySelectorAll('[data-module]'));
+  for(const item of $$('[data-settings-access]')){
+    item.hidden=!canManage()||(item.dataset.settingsAccess==='team-admin'&&!TEAM_API);
+  }
+  function openMenu(){
+    drawer.showModal();
+    const current=page==='ajustes'&&modules.find(button=>button.hasAttribute('aria-current'));
+    (current||modules[0]).focus();
+  }
+  $('#settings-toggle').onclick=openMenu;
+  $('#settings-link').onclick=openMenu;
+  $('#settings-close').onclick=()=>drawer.close();
+  drawer.onclick=event=>{
+    if(event.target===drawer){
+      const bounds=drawer.getBoundingClientRect();
+      if(event.clientX>bounds.right||event.clientX<bounds.left)drawer.close();
+      return;
+    }
+    const button=event.target.closest('[data-module]');
+    if(!button||button.hidden)return;
+    const selected=document.getElementById(button.getAttribute('aria-controls'));
+    for(const panel of $$('.settings-pane'))panel.hidden=panel!==selected;
+    for(const item of modules){
+      if(item===button)item.setAttribute('aria-current','page');
+      else item.removeAttribute('aria-current');
+    }
+    drawer.close();
+    show('ajustes');
+    selected.querySelector('h2').focus();
+    if(button.dataset.module==='usuarios'&&navigator.onLine)listMembers().catch(fail);
+    if(button.dataset.module==='excel')checkWorkbook();
+  };
+}
 function setup(){
   $('#page-back').onclick=()=>{
     const previous=visitedPages.pop();if(!previous)return;
@@ -338,7 +371,7 @@ function setup(){
   $('#session-remember').checked=!!session.remember;
   $('#session-remember').onchange=e=>{const remember=e.target.checked;setSession({...session,remember});(remember?sessionStorage:localStorage).removeItem(SESSION_KEY)};
   $('#cloud-link').onclick=()=>show('onedrive');
-  $('#settings-link').onclick=()=>show('ajustes');
+  setupSettingsMenu();
   $('#more-moves').onclick=()=>{moveLimit+=80;render()};
   for(const [id,filter] of [['#n-products','all'],['#n-out','out'],['#n-low','low'],['#n-today','today']]){
     const card=$(id).closest('article');card.tabIndex=0;card.setAttribute('role','button');

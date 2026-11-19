@@ -188,3 +188,32 @@ dialog .back-link {margin: 4px 0 8px}
 :root:not(.light) #report-dialog {--sheet:#111419; --control:#1c2027; --control-line:#30353c; --action:#23a19e; --stock-band:#173332; --muted:#b9c0c8}
 :root:not(.light) #report-dialog :is(.report-downloads .btn:not(.outline),.switchbar input:checked+span) {color:#071d20}
 @media(max-width:650px){#report-dialog {padding: 0 14px max(18px,env(safe-area-inset-bottom))}#report-dialog .back-link {margin-top: 8px}}
+
+#settings-toggle {display:grid;place-items:center;flex-shrink:0}
+#settings-toggle svg {width:21px;height:21px}
+#settings-drawer {
+  position:fixed;inset:0 auto 0 0;margin:0;width:min(82vw,320px);max-width:none;
+  height:100%;height:100dvh;max-height:none;overflow-y:auto;box-sizing:border-box;
+  padding:max(24px,env(safe-area-inset-top)) 14px max(24px,env(safe-area-inset-bottom));
+  border:0;border-radius:0;background:#294957;color:#fff;box-shadow:6px 0 30px #07192340
+}
+#settings-drawer::backdrop {background:rgb(7 18 23 / 60%)}
+#settings-drawer header {display:flex;align-items:center;justify-content:space-between;padding:0 8px 18px;border-bottom:1px solid #ffffff32}
+#settings-drawer h2 {margin:0;font-size:1.3rem;color:inherit}
+#settings-close {background:transparent;color:white;border:0;font-size:1.7rem;width:44px;height:44px}
+#settings-drawer nav {display:grid;gap:4px;margin-top:16px}
+#settings-drawer nav button {display:flex;align-items:center;gap:14px;min-height:50px;padding:10px 14px;text-align:left;border:0;border-radius:8px;background:transparent;color:white;font:inherit;font-weight:600}
+#settings-drawer nav button:hover {background:#ffffff18}
+#settings-drawer nav button[aria-current] {background:#166c6c;box-shadow:inset 3px 0 #7fe0cf}
+#settings-drawer button:focus-visible {outline:2px solid #a5ecdc;outline-offset:-3px}
+#settings-drawer nav svg {width:21px;height:21px;flex:none}
+#p-ajustes .settings-pane {display:grid;gap:16px;max-width:720px;margin:0 auto}
+#p-ajustes .settings-pane :is(h2,p) {margin:0}
+#p-ajustes .settings-pane .btn {max-width:100%;white-space:normal}
+#p-ajustes .settings-pane input {max-width:100%}
+#p-ajustes .settings-pane input[type="checkbox"] {width:auto;vertical-align:middle}
+@media(max-width:420px){.mast {gap:6px}.mast #appname {min-width:0;line-height:1.25}}
+@media(prefers-reduced-motion:no-preference){
+  #settings-drawer[open] {animation:settings-slide .18s ease-out}
+  @keyframes settings-slide {from{transform:translateX(-100%)}to{transform:translateX(0)}}
+}
