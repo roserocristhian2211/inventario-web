@@ -184,12 +184,10 @@ function renderLedger(){
   const rows=moves.filter(m=>direct.has(m.data.pid)&&(type==='todos'||type===m.type)&&(!from||m.date>=from)&&(!to||m.date<=to)&&(!pond||m.data.dest===pond)&&[m.prod,m.code,m.data.doc,m.data.origin,m.data.dest,m.date].some(v=>String(v??'').toLowerCase().includes(query)));
   for(const tab of $$('[data-ledger-type]'))tab.setAttribute('aria-pressed',String(tab.dataset.ledgerType===type));
   $('#movement-count').textContent=rows.length+(rows.length===1?' registro':' registros');
-  const totals=new Map();
-  for(const m of rows){
-    const key=(type==='todos'?m.type+' · ':'')+m.unit;
-    totals.set(key,(totals.get(key)||0)+m.q);
-  }
-  $('#move-totals').textContent=from&&to&&from>to?'La fecha final debe ser igual o posterior a la inicial.':'Total en vista: '+([...totals].map(([unit,q])=>fmt(q)+' '+unit).join(' / ')||'0');
+  const dateError=$('#move-date-error');
+  const invalidDates=Boolean(from&&to&&from>to);
+  dateError.hidden=!invalidDates;
+  dateError.textContent=invalidDates?'La fecha final debe ser igual o posterior a la inicial.':'';
   let previous=null;
   $('#moves').innerHTML=rows.slice(0,moveLimit).map(m=>{
     const day=ledgerDay(m.date),heading=previous!==m.date?'<h3 class="ledger-day">'+esc(day)+'</h3>':'';
