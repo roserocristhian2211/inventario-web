@@ -155,7 +155,7 @@ export class Bodega {
         if(path==='/remove'){sql.exec('DELETE FROM invites WHERE email=?',address);sql.exec('DELETE FROM members WHERE email=?',address);return {}}
         throw Object.assign(new Error('Ruta inexistente.'),{status:404});
       });
-      if(['/batch','/event','/import','/guide-replace'].includes(path))this.ctx.waitUntil(this.wakeWorkbook());
+      if(['/batch','/event','/import','/guide-replace'].includes(path))await this.wakeWorkbook();
       return reply(result);
     }catch(e){return reply({error:e.status?e.message:'No se pudo guardar la operación.'},e.status||400)}
   }

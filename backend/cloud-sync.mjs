@@ -4,19 +4,28 @@ import {requireValue} from './ledger.mjs';
 
 const period=60000;
 const assertGraph=r=>{
-  const messages={401:'Vuelve a iniciar sesión con Microsoft.',403:'Comprueba que la cuenta administradora tenga permiso de edición.',404:'Revisa que BASE.xlsm esté en Inventario Web Independiente del OneDrive administrador.',412:'El libro cambió durante la sincronización. Se reintentará.',423:'El libro está bloqueado. Guarda los cambios y cierra Excel para reintentar.'};
+  const messages={401:'Vuelve a iniciar sesión con Microsoft.',403:'Comprueba que la cuenta administradora tenga permiso de edición.',404:'Revisa que BASE.xlsm esté en Inventario Web Independiente del OneDrive administrador.',409:'Hay un conflicto al actualizar BASE. Se volverá a leer la versión de OneDrive.',412:'El libro cambió durante la sincronización. Se reintentará.',423:'El libro está bloqueado. Guarda los cambios y cierra Excel para reintentar.'};
   requireValue(r.ok,'OneDrive '+r.status+'. '+(messages[r.status]||'Se reintentará la sincronización.'),r.status);
 };
-async function publish(url,headers,tag,bytes){
-  const session=await fetch(url+'/createUploadSession',{method:'POST',headers:{...headers,'Content-Type':'application/json','If-Match':tag},body:JSON.stringify({deferCommit:true})});
+export async function publish(drive,file,headers,bytes){
+  const tag=file.eTag,parent=file.parentReference?.id;
+  requireValue(parent,'OneDrive no identificó la carpeta de BASE.xlsm.',409);
+  const items='https://graph.microsoft.com/v1.0/drives/'+encodeURIComponent(drive)+'/items/';
+  const url=items+encodeURIComponent(file.id);
+  const session=await fetch(url+'/createUploadSession',{method:'POST',headers:{...headers,'Content-Type':'application/json','If-Match':tag},body:JSON.stringify({deferCommit:true,item:{'@microsoft.graph.conflictBehavior':'replace'}})});
   assertGraph(session);
   const {uploadUrl}=await session.json();
   const sent=await fetch(uploadUrl,{method:'PUT',headers:{'Content-Range':'bytes 0-'+(bytes.length-1)+'/'+bytes.length},body:bytes});
   assertGraph(sent);
+  function confirmed(item){
+    requireValue(item.id===file.id&&item.eTag,'OneDrive no confirmó la versión de BASE.xlsm.',409);
+    return item.eTag;
+  }
+  if(sent.status===200||sent.status===201)return confirmed(await sent.json());
   requireValue(sent.status===202,'OneDrive no confirmó la carga diferida.',409);
-  const commit=await fetch(url,{method:'PUT',headers:{...headers,'If-Match':tag,'Content-Type':'application/json'},body:JSON.stringify({name:'BASE.xlsm','@microsoft.graph.sourceUrl':uploadUrl,'@microsoft.graph.conflictBehavior':'replace'})});
+  const commit=await fetch(items+encodeURIComponent(parent),{method:'PUT',headers:{...headers,'If-Match':tag,'Content-Type':'application/json'},body:JSON.stringify({name:'BASE.xlsm','@microsoft.graph.sourceUrl':uploadUrl,'@microsoft.graph.conflictBehavior':'replace'})});
   assertGraph(commit);
-  return (await commit.json()).eTag;
+  return confirmed(await commit.json());
 }
 
 function applyChange(db,{id,movement:m},admin){
@@ -94,7 +103,7 @@ export async function syncCloud(ctx,env,db,sessionToken,accessCache={}){
       try{store.transactionSync(()=>{apply();throw rollback})}catch(error){if(error!==rollback)throw error}
     }
     let tag=file.eTag;
-    if(result.bytes)tag=await publish(itemUrl,headers,tag,result.bytes);
+    if(result.bytes)tag=await publish(drive,file,headers,result.bytes);
     else{const latest=await fetch(itemUrl+'?$select=eTag',{headers});assertGraph(latest);requireValue((await latest.json()).eTag===tag,'BASE cambió durante la lectura.',409)}
     const committed=store.transactionSync(()=>{
       const byId=apply();

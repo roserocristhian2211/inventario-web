@@ -94,3 +94,23 @@ test('conteo de operador, traspaso porcentual y corrección de entrada conservan
  assert.equal(edited.data.actor,operator.email);assert.equal(edited.data.editedBy,owner.email);
  assert.equal(ledger.first('SELECT stock FROM products').stock,7e6);
 });
+
+test('BASE en OneDrive personal confirma el mismo archivo y respeta cambios concurrentes',async t=>{
+  const {publish}=await import('./cloud-sync.mjs');
+  const file={id:'base',eTag:'v1',parentReference:{id:'folder'}};
+  const requests=[];
+  let conflict=false;
+  t.mock.method(globalThis,'fetch',async(url,options)=>{
+    requests.push([url,options]);
+    if(url.endsWith('/createUploadSession'))return Response.json({uploadUrl:'https://upload.test/session'});
+    if(url==='https://upload.test/session')return new Response(null,{status:202});
+    assert.ok(url.endsWith('/items/folder'));
+    assert.equal(options.headers['If-Match'],'v1');
+    assert.equal(JSON.parse(options.body).name,'BASE.xlsm');
+    return conflict?new Response(null,{status:412}):Response.json({id:'base',eTag:'v2'});
+  });
+  assert.equal(await publish('drive',file,{},new Uint8Array([1,2])),'v2');
+  assert.equal(requests.length,3);
+  conflict=true;
+  await assert.rejects(publish('drive',file,{},new Uint8Array([3])),/412/);
+});

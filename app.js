@@ -30,6 +30,7 @@ async function teamCall(path,body={}){
     if(res.status===403&&data.error==='Cuenta sin acceso a esta bodega.'){teamUser=null;setSession(null);$('#workspace').hidden=true;location.replace(redirect())}
     throw Error(data.error||'No se pudo contactar a la bodega.')
   }
+  if(teamUser?.role==='admin'&&['/event','/batch','/guide-replace','/import'].includes(path))queueWorkbookCheck();
   return data
 }
 async function pullTeam(){
@@ -106,6 +107,14 @@ async function recoverPersonalInventory(){
   }finally{personal.close()}
 }
 let workbookCheck=null,lastWorkbookCheck=0,lastWorkbookCursor=-1;
+let workbookTimer;
+function queueWorkbookCheck(){
+  clearTimeout(workbookTimer);
+  workbookTimer=setTimeout(async()=>{
+    if(workbookCheck)await workbookCheck;
+    if(session?.profile)checkWorkbook(true);
+  },350);
+}
 function checkWorkbook(force=false){
   if(!canManage()||!navigator.onLine)return;
   if(workbookCheck)return workbookCheck;
