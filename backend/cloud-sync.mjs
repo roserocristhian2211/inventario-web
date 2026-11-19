@@ -2,7 +2,7 @@ import {reconcileWorkbook,movementSignature} from './workbook.mjs';
 import {authorizeSync} from './onedrive.mjs';
 import {requireValue} from './ledger.mjs';
 
-const period=300000;
+const period=60000;
 const assertGraph=r=>{
   const messages={401:'Vuelve a iniciar sesión con Microsoft.',403:'Comprueba que la cuenta administradora tenga permiso de edición.',404:'Revisa que BASE.xlsm esté en Inventario Web Independiente del OneDrive administrador.',412:'El libro cambió durante la sincronización. Se reintentará.',423:'El libro está bloqueado. Guarda los cambios y cierra Excel para reintentar.'};
   requireValue(r.ok,'OneDrive '+r.status+'. '+(messages[r.status]||'Se reintentará la sincronización.'),r.status);
@@ -22,7 +22,8 @@ async function publish(url,headers,tag,bytes){
 function applyChange(db,{id,movement:m},admin){
   const old=db.first('SELECT seq,payload FROM events WHERE id=?',id);
   requireValue(m.ref.length<=(m.type==='entrada'?75:80)&&Number.isSafeInteger(Math.round(m.q*1e6))&&Math.round(m.q*1e6)>0,'Cantidad o referencia inválida en BASE.',409);
-  const data={pid:m.pid,q:m.q,[m.type==='entrada'?'doc':'dest']:m.ref};
+  requireValue(m.note.length<=180&&m.origin.length<=80,'Observación u origen demasiado largo en BASE.',409);
+  const data={pid:m.pid,q:m.q,note:m.note,origin:m.origin,[m.type==='entrada'?'doc':'dest']:m.ref};
   if(!old)return db.append({id,type:m.type,date:m.date,data},admin);
   const e=JSON.parse(old.payload);
   requireValue(e.type===m.type,'Cambió el tipo de movimiento.',409);
@@ -56,27 +57,55 @@ export async function syncCloud(ctx,env,db,sessionToken){
     if(!bound)await store.put('onedrive-owner-file',{drive,item});
     const itemUrl='https://graph.microsoft.com/v1.0/drives/'+encodeURIComponent(drive)+'/items/'+encodeURIComponent(item);
     const last=await store.get('onedrive-checkpoint');
-    if(last?.drive===drive&&last.item===item&&last.tag===file.eTag&&last.seq===seq){await store.put('onedrive-status','Al día');return 'Al día'}
+    if(last?.version===2&&last.drive===drive&&last.item===item&&last.tag===file.eTag&&last.seq===seq){await store.put('onedrive-status','Al día');return 'Al día'}
     const download=await fetch(file['@microsoft.graph.downloadUrl']);assertGraph(download);
     const events=[...db.sql.exec('SELECT payload FROM events ORDER BY seq')].map(r=>JSON.parse(r.payload));
     db.sql.exec('CREATE TABLE IF NOT EXISTS workbook_links(id TEXT PRIMARY KEY,signature TEXT NOT NULL)');
     const linked=new Map([...db.sql.exec('SELECT id,signature FROM workbook_links')].map(r=>[r.id,r.signature]));
-    const result=reconcileWorkbook(new Uint8Array(await download.arrayBuffer()),events,linked);
+    db.sql.exec('CREATE TABLE IF NOT EXISTS workbook_products(id TEXT PRIMARY KEY,baseline TEXT NOT NULL)');
+    const productLinks=new Map([...db.sql.exec('SELECT id,baseline FROM workbook_products')].map(r=>[r.id,JSON.parse(r.baseline)]));
+    const result=reconcileWorkbook(new Uint8Array(await download.arrayBuffer()),events,linked,productLinks);
+    const admin={subject:env.ADMIN_SUB,email:env.ADMIN_EMAIL,role:'admin'};
+    function apply(){
+      requireValue((db.first('SELECT MAX(seq) n FROM events').n||0)===seq,'La bodega cambió durante la lectura. Reintentando.',409);
+      const byId=new Map(events.map(e=>[e.id,e]));
+      for(const event of result.productEvents){
+        if(event.type==='ajuste')event.data.expected=db.first('SELECT stock FROM products WHERE id=?',event.data.pid).stock/1e6;
+        db.append(event,admin);
+      }
+      for(const change of result.changes)byId.set(change.id,applyChange(db,change,admin));
+      for(const op of result.operations){
+        const before=byId.get(op.id);
+        if(!before){db.append(op,admin);continue}
+        const revised=db.append({...op,id:crypto.randomUUID()},admin);
+        db.sql.exec('DELETE FROM events WHERE id=?',revised.id);
+        const data={...revised.data,actor:before.data.actor,editedBy:admin.email};
+        if(before.type==='medicion')data.system=before.data.system;
+        db.sql.exec('UPDATE events SET seq=?,payload=? WHERE id=?',revised.entryOrder,JSON.stringify({...before,date:op.date,data}),op.id);
+      }
+      return byId;
+    }
+    // Validate the merge against stock and uniqueness constraints before writing OneDrive.
+    if(result.productEvents.length||result.changes.length||result.operations.length){
+      const rollback=new Error('Validación completada');
+      try{store.transactionSync(()=>{apply();throw rollback})}catch(error){if(error!==rollback)throw error}
+    }
     let tag=file.eTag;
     if(result.bytes)tag=await publish(itemUrl,headers,tag,result.bytes);
     else{const latest=await fetch(itemUrl+'?$select=eTag',{headers});assertGraph(latest);requireValue((await latest.json()).eTag===tag,'BASE cambió durante la lectura.',409)}
-    const admin={subject:env.ADMIN_SUB,email:env.ADMIN_EMAIL,role:'admin'};
     const committed=store.transactionSync(()=>{
-      requireValue((db.first('SELECT MAX(seq) n FROM events').n||0)===seq,'La bodega cambió durante la lectura. Reintentando.',409);
-      const byId=new Map(events.map(e=>[e.id,e]));
-      for(const change of result.changes)byId.set(change.id,applyChange(db,change,admin));
+      const byId=apply();
+      for(const [id,fields] of result.productsSeen){
+        const baseline=JSON.stringify(fields);
+        if(JSON.stringify(productLinks.get(id))!==baseline)db.sql.exec('INSERT OR REPLACE INTO workbook_products VALUES(?,?)',id,baseline);
+      }
       for(const id of result.seen){
         const signature=movementSignature(byId.get(id));
         if(linked.get(id)!==signature)db.sql.exec('INSERT OR REPLACE INTO workbook_links VALUES(?,?)',id,signature);
       }
       return db.first('SELECT MAX(seq) n FROM events').n||0;
     });
-    await store.put('onedrive-checkpoint',{drive,item,tag,seq:committed});
+    await store.put('onedrive-checkpoint',{version:2,drive,item,tag,seq:committed});
     const message='Sincronizado · '+new Date().toISOString();await store.put('onedrive-status',message);return message;
   }catch(err){const message=err.message?.slice(0,180)||'Error de sincronización';await store.put('onedrive-status',message);return message}
 }

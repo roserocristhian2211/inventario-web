@@ -65,7 +65,8 @@ export class Bodega {
         requireValue(subject===this.env.ADMIN_SUB,'Acceso exclusivo del administrador.',403);
         requireValue(typeof body.token==='string'&&body.token.length>20,'Vuelve a iniciar sesión con Microsoft.');
         if(await this.ctx.storage.get('excel-paused'))return reply({message:'Sincronización de Excel en pausa.',paused:true});
-        return reply({message:await this.synchronize(body.token),paused:false});
+        const cloud=!!await this.ctx.storage.get('onedrive-connection');
+        return reply({message:await this.synchronize(cloud?undefined:body.token),paused:false,cloud});
       }
       if(path==='/onedrive/status'){
         requireValue(subject===this.env.ADMIN_SUB,'Acceso exclusivo del administrador.',403);

@@ -110,12 +110,12 @@ function checkWorkbook(force=false){
   if(!canManage()||!navigator.onLine)return;
   if(workbookCheck)return workbookCheck;
   const cursor=settings.cursor||0;
-  if(!force&&cursor===lastWorkbookCursor&&Date.now()-lastWorkbookCheck<300000)return;
+  if(!force&&cursor===lastWorkbookCursor&&Date.now()-lastWorkbookCheck<60000)return;
   lastWorkbookCheck=Date.now();lastWorkbookCursor=cursor;
   const status=$('#onedrive-status');status.textContent='Comprobando BASE.xlsm…';
   workbookCheck=(async()=>{
     const result=await teamCall('/onedrive/session',{token:await token()});
-    status.textContent=result.message||'Pendiente de comprobar';$('#pause-workbook').dataset.paused=String(!!result.paused);$('#pause-workbook').textContent=result.paused?'Reanudar sincronización':'Pausar sincronización';
+    status.textContent=(result.message||'Pendiente de comprobar')+(result.paused?'':result.cloud?' · Automática en la nube.':' · Solo con esta sesión abierta. Para continuar al cerrar la app, pulsa Autorizar OneDrive para la nube.');$('#pause-workbook').dataset.paused=String(!!result.paused);$('#pause-workbook').textContent=result.paused?'Reanudar sincronización':'Pausar sincronización';
   })().catch(err=>{status.textContent=err.message}).finally(()=>{workbookCheck=null});
   return workbookCheck;
 }
