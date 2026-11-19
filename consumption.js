@@ -1,4 +1,4 @@
-import {destinations} from './reports.js?v=12';
+import {destinations} from './reports.js?v=19';
 const norm=x=>String(x??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase();
 const key=x=>[x.date,x.data.dest,x.data.pid,Math.round(x.data.q*1e6)].join('|');
 function dest(x){
@@ -42,7 +42,7 @@ export function installImport(ui){
   $('#consumption-file').onchange=async e=>{
     const file=e.target.files[0];e.target.value='';if(!file)return;
     try{
-      const reader=await import('./report-vendor.js?v=12');
+      const reader=await import('./report-vendor.js?v=19');
       const sheets=(await reader.readSheets(file)).filter(s=>!/(indirect|combustible|diesel|tanque|lubricante)/i.test(s.name)&&parseConsumptions(s,current(),today())?.length);
       if(!sheets.length)throw Error('No encontré filas de consumo. Revisa los encabezados de la plantilla.');
       open('Revisar consumo de Excel','<p>'+escape(file.name)+'</p><form>'+'<fieldset><legend>Hojas de consumo</legend>'+sheets.map((s,i)=>'<label><input type="checkbox" name="sheet" value="'+i+'" '+(i===0?'checked':'')+'> '+escape(s.name)+'</label>').join('')+'</fieldset>'+label('Fecha para filas sin fecha',input('day','date',today(),'required'))+label('Incluir posibles duplicados',input('duplicates','checkbox'))+'</form><div id="import-lines"></div>'+button('import-confirm','Registrar salidas'));

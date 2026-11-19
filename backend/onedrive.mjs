@@ -59,5 +59,5 @@ export async function authorizeSync(storage,env,connection){
     const sealed=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,enc.encode(renewed.refresh_token));
     await storage.put('onedrive-connection',{...connection,iv:encoded(iv),sealed:encoded(sealed)});
   }
-  return renewed.access_token;
+  return {token:renewed.access_token,expires:Date.now()+Number(renewed.expires_in||0)*1000};
 }

@@ -1,7 +1,7 @@
-import {installDirect,pondRows} from './direct.js?v=16';
-import {installImport,planInventoryImport} from './consumption.js?v=12';
+import {installDirect,pondRows} from './direct.js?v=19';
+import {installImport,planInventoryImport} from './consumption.js?v=19';
 let refreshCounts,moveLimit=80;
-import {setupReportUI,familyOf,compareProducts,destinations} from './reports.js?v=17';
+import {setupReportUI,familyOf,compareProducts,destinations} from './reports.js?v=19';
 import {TEAM_API} from './team-config.js?v=6';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -27,7 +27,7 @@ async function teamCall(path,body={}){
   const res=await fetch(TEAM_API+path,{method:'POST',headers:{Authorization:'Bearer '+session.id_token,'Content-Type':'application/json'},body:JSON.stringify(body)});
   const data=await res.json();
   if(!res.ok){
-    if(res.status===403&&data.error==='Cuenta sin acceso a esta bodega.'&&teamUser){teamUser=null;location.replace(redirect())}
+    if(res.status===403&&data.error==='Cuenta sin acceso a esta bodega.'){teamUser=null;setSession(null);$('#workspace').hidden=true;location.replace(redirect())}
     throw Error(data.error||'No se pudo contactar a la bodega.')
   }
   return data
@@ -35,12 +35,12 @@ async function teamCall(path,body={}){
 async function pullTeam(){
   if(pulling)return pulling;
   pulling=(async()=>{
-    const previousSync=settings.lastSync, incoming=[];let rows;
+    const previousSync=settings.lastSync, incoming=[];let rows,changed=false;
     if(!settings.hasEntryOrder){await setting('cursor',0)}
 
     do{
       const result=await teamCall('/changes',{after:settings.cursor||0});
-      rows=result.rows;
+      rows=result.rows;changed||=rows.length>0;
       for(const {event} of rows){
         for(const id of [event.data.photo,...(event.data.attachments||[])].filter(Boolean))if(!await one('photos',id)){
           const photo=await teamCall('/photo',{id});
@@ -54,7 +54,7 @@ async function pullTeam(){
       if(result.name)await setting('name',result.name);
     }while(rows.length===200);
     await setting('hasEntryOrder',true);
-    await setting('lastSync',new Date().toISOString());await reload();
+    await setting('lastSync',new Date().toISOString());if(changed||!previousSync||!events.length||photos.some(p=>p.expires&&p.expires<=Date.now()))await reload();else render();
     for(const event of incoming){const product=active().find(p=>p.id===event.data.pid);if(product)notifyMove(event,product)}
   })().finally(()=>{pulling=null});
   return pulling
@@ -230,7 +230,7 @@ if(kind==='conteo'){let p=active().find(x=>x.id===pid),q=number(v('q'));if(!p||q
 $('#modal').close();if(kind==='movimiento'&&$('#direct-dialog').open)$('#direct-dialog').close();if(kind!=='movimiento')toast(TEAM_API?'Registro confirmado en la bodega.':'Registro guardado en este dispositivo.');scheduleSync()}catch(err){fail(err)}finally{submit.disabled=false}}
 async function exportJSON(){let json=JSON.stringify({format:'inventario-web-independent-v1',fecha:new Date().toISOString(),events,photos},null,2);download('respaldo-inventario-'+today()+'.json',json,'application/json')}
 function download(name,body,type){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([body],{type}));a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),3000)}
-function csvEscape(x){let s=String(x??'');return /[;"\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}
+function csvEscape(x){let s=String(x??'');if(typeof x==='string'&&/^\s*[=+@-]/.test(s))s="'"+s;return /[;"\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}
 function exportCSV(){download('productos-'+today()+'.csv','\uFEFF'+[['codigo','descripcion','unidad','categoria','minimo','stock'],...active().map(x=>[x.code,x.name,x.unit,x.cat,x.min,x.stock])].map(r=>r.map(csvEscape).join(';')).join('\r\n'),'text/csv')}
 function csvParse(txt){let t=txt.replace(/^\uFEFF/,''),sep=t.split(/\r?\n/,1)[0].includes(';')?';':',';let rows=[],row=[],cell='',quote=false;for(let i=0;i<t.length;i++){let ch=t[i];if(ch==='"'){if(quote&&t[i+1]==='"'){cell+='"';i++}else quote=!quote}else if(ch===sep&&!quote){row.push(cell);cell=''}else if((ch==='\n'||ch==='\r')&&!quote){if(ch==='\r'&&t[i+1]==='\n')i++;row.push(cell);if(row.some(v=>v.trim()))rows.push(row);row=[];cell=''}else cell+=ch}if(quote)throw Error('CSV inválido: comillas sin cerrar');row.push(cell);if(row.some(v=>v.trim()))rows.push(row);return rows}
 async function importCSV(file){let rows=csvParse(await file.text());let first=rows.shift()?.map(x=>x.toLowerCase().trim())||[];let get=(r,key)=>r[first.indexOf(key)];if(!first.includes('codigo')||!first.includes('descripcion'))throw Error('El CSV debe tener columnas codigo y descripcion.');let codes=new Set(active().map(x=>x.code.toLowerCase())),count=0;for(const r of rows){let code=(get(r,'codigo')||'').trim(),name=(get(r,'descripcion')||'').trim(),cat=(get(r,'categoria')||'').trim().toLowerCase();if((cat&&cat!=='directo'&&cat!=='material directo')||!code||!name||codes.has(code.toLowerCase()))continue;let min=Number(get(r,'minimo')||0);if(!Number.isFinite(min)||min<0)min=0;await commitEvent(record('create',{pid:uid(),code,name,unit:get(r,'unidad')||'UND',cat:'directo',min,photo:null}));codes.add(code.toLowerCase());count++}await reload();toast(count+' productos importados.')}
@@ -267,7 +267,29 @@ function random(){let b=crypto.getRandomValues(new Uint8Array(32));return btoa(S
 async function connect(){const client=CLIENT,tenant='consumers';let verifier=random(),state=random(),digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier));let challenge=btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');sessionStorage.setItem('iw-oauth-pending',JSON.stringify({client,tenant,verifier,state,remember:$('#remember').checked,redirect:redirect(),created:Date.now()}));let q=new URLSearchParams({client_id:client,response_type:'code',redirect_uri:redirect(),response_mode:'query',scope:'openid profile offline_access User.Read Files.ReadWrite',state,code_challenge:challenge,code_challenge_method:'S256',prompt:'select_account'});location.assign('https://login.microsoftonline.com/'+tenant+'/oauth2/v2.0/authorize?'+q)}
 async function exchange(client,tenant,body){let r=await fetch('https://login.microsoftonline.com/'+tenant+'/oauth2/v2.0/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:client,scope:'openid profile offline_access User.Read Files.ReadWrite',...body})});let d=await r.json().catch(()=>({}));if(!r.ok){const error=Error(d.error_description||d.error||'Fallo de autenticación');error.code=d.error;throw error}return d}
 async function callback(){let p=new URLSearchParams(location.search);if(!p.has('code')&&!p.has('error'))return;const pending=JSON.parse(sessionStorage.getItem('iw-oauth-pending')||'null');let err=p.get('error_description')||p.get('error'),code=p.get('code'),state=p.get('state');history.replaceState({},'',location.pathname);if(err)throw Error(err);if(!pending||pending.state!==state||pending.redirect!==redirect()||Date.now()-pending.created>600000)throw Error('Código OAuth caducado o inválido.');sessionStorage.removeItem('iw-oauth-pending');let x=await exchange(pending.client,pending.tenant,{grant_type:'authorization_code',code,redirect_uri:redirect(),code_verifier:pending.verifier});sessionStorage.removeItem(SESSION_KEY);localStorage.removeItem(SESSION_KEY);setSession({...x,remember:!!pending.remember,client:pending.client,tenant:pending.tenant,expires:Date.now()+x.expires_in*1000})}
-async function token(){if(!session)throw Error('Conecta la cuenta OneDrive.');if(session.expires-Date.now()>90000)return session.access_token;try{let v=await exchange(session.client,session.tenant,{grant_type:'refresh_token',refresh_token:session.refresh_token});setSession({...session,...v,expires:Date.now()+v.expires_in*1000});return session.access_token}catch(e){if(e.code==='invalid_grant'){setSession(null);location.replace(redirect())}throw e}}
+let renewal=null;
+async function token(){
+  if(!session)throw Error('Conecta la cuenta OneDrive.');
+  if(session.expires-Date.now()>90000)return session.access_token;
+  if(renewal)return renewal;
+  const original=session.refresh_token;
+  async function refresh(){
+    const stored=loadSession();
+    if(!stored||stored.client!==session?.client||stored.profile?.id!==session?.profile?.id)throw Error('La sesión cambió.');
+    if(stored.refresh_token!==original&&stored.expires>Date.now()+90000){session=stored;return stored.access_token}
+    try{
+      const v=await exchange(stored.client,stored.tenant,{grant_type:'refresh_token',refresh_token:stored.refresh_token});
+      const current=loadSession();
+      if(!current||current.refresh_token!==stored.refresh_token)throw Error('La sesión cambió.');
+      setSession({...current,...v,expires:Date.now()+v.expires_in*1000});return session.access_token;
+    }catch(e){
+      if(e.code==='invalid_grant'&&loadSession()?.refresh_token===stored.refresh_token){setSession(null);location.replace(redirect())}
+      throw e;
+    }
+  }
+  renewal=(navigator.locks&&session.remember?navigator.locks.request('iw-refresh-'+CLIENT,refresh):refresh()).finally(()=>{renewal=null});
+  return renewal;
+}
 async function graph(path,opts={}){let auth=await token();let r=await fetch(GRAPH+path,{...opts,headers:{Authorization:'Bearer '+auth,...opts.headers}});if(!r.ok){let msg=await r.text().catch(()=>'');let e=Error('OneDrive HTTP '+r.status+' '+msg.slice(0,180));e.status=r.status;throw e}return r}
 async function j(path,opts){return (await graph(path,opts)).json()}
 const enc=encodeURIComponent;

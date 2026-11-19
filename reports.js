@@ -161,7 +161,7 @@ export function setupReportUI(ctx){
         await ctx.saveAnchor({date,number});preview();
       }catch(e){ctx.fail(e)}};
       for(const b of form.querySelectorAll('[data-export]'))b.onclick=async()=>{try{
-        const report=get(),writer=await import('./report-vendor.js?v=12');
+        const report=get(),writer=await import('./report-vendor.js?v=19');
         if(kind==='daily')for(const key of signatures)localStorage.setItem('iw-report-'+key,form.elements[key].value);
         if(b.dataset.export==='share'){
           const files=[writer.makePDF(report,true)];

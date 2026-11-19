@@ -39,13 +39,16 @@ function applyChange(db,{id,movement:m},admin){
   db.sql.exec('UPDATE events SET seq=(SELECT MAX(seq)+1 FROM events), payload=? WHERE id=?',JSON.stringify(saved),id);
   return saved;
 }
-export async function syncCloud(ctx,env,db,sessionToken){
+export async function syncCloud(ctx,env,db,sessionToken,accessCache={}){
   const store=ctx.storage, connection=await store.get('onedrive-connection');
   if(connection)await store.setAlarm(Date.now()+period);
   if(!connection&&!sessionToken)return;
 
   try{
-    const token=sessionToken||await authorizeSync(store,env,connection),headers={Authorization:'Bearer '+token};
+    if(!sessionToken&&!(accessCache.expires>Date.now()+90000)){
+      Object.assign(accessCache,await authorizeSync(store,env,connection));
+    }
+    const headers={Authorization:'Bearer '+(sessionToken||accessCache.token)};
     const bound=connection||await store.get('onedrive-owner-file');
     const url=bound?'https://graph.microsoft.com/v1.0/drives/'+encodeURIComponent(bound.drive)+'/items/'+encodeURIComponent(bound.item):
       'https://graph.microsoft.com/v1.0/me/drive/root:/Inventario%20Web%20Independiente/BASE.xlsm';
@@ -107,5 +110,5 @@ export async function syncCloud(ctx,env,db,sessionToken){
     });
     await store.put('onedrive-checkpoint',{version:2,drive,item,tag,seq:committed});
     const message='Sincronizado · '+new Date().toISOString();await store.put('onedrive-status',message);return message;
-  }catch(err){const message=err.message?.slice(0,180)||'Error de sincronización';await store.put('onedrive-status',message);return message}
+  }catch(err){if(err.status===401)accessCache.expires=0;const message=err.message?.slice(0,180)||'Error de sincronización';await store.put('onedrive-status',message);return message}
 }

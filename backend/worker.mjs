@@ -8,6 +8,25 @@ const issuer='https://login.microsoftonline.com/'+tenant+'/v2.0';
 const keys=createRemoteJWKSet(new URL('https://login.microsoftonline.com/consumers/discovery/v2.0/keys'));
 const cors={'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Headers':'authorization,content-type','Access-Control-Allow-Methods':'POST,OPTIONS','Cache-Control':'no-store'};
 const reply=(obj,status=200)=>Response.json(obj,{status,headers:cors});
+async function requestBody(req){
+  const limit=1800000;
+  requireValue(Number(req.headers.get('Content-Length')||0)<=limit,'Solicitud demasiado grande.',413);
+  if(!req.body)return {};
+  const reader=req.body.getReader(),decoder=new TextDecoder();
+  let size=0,text='';
+  try{
+    while(true){
+      const {done,value}=await reader.read();if(done)break;
+      size+=value.byteLength;
+      if(size>limit){await reader.cancel();requireValue(false,'Solicitud demasiado grande.',413)}
+      text+=decoder.decode(value,{stream:true});
+    }
+    text+=decoder.decode();
+  }finally{reader.releaseLock()}
+  const body=text?JSON.parse(text):{};
+  requireValue(body&&typeof body==='object'&&!Array.isArray(body),'Solicitud inválida.');
+  return body;
+}
 export default {async fetch(req,env){
   if(req.method==='OPTIONS')return new Response(null,{headers:cors});
   try{
@@ -24,17 +43,16 @@ export default {async fetch(req,env){
     const subject=claims.sub, label=String(claims.preferred_username||claims.email||'').trim().toLowerCase();
     if(path==='/identity')return reply({subject,email:label});
     requireValue(env.ADMIN_SUB&&env.ADMIN_EMAIL,'Administración pendiente de activar.',503);
-    const raw=await req.text();requireValue(raw.length<1800000,'Solicitud demasiado grande.',413);
-    const body=raw?JSON.parse(raw):{};
+    const body=await requestBody(req);
     const stub=env.BODEGA.get(env.BODEGA.idFromName('inventario-central-v1'));
     return await stub.fetch('https://internal'+path,{method:'POST',body:JSON.stringify({subject,label,body})});
   }catch(e){return reply({error:e.status?e.message:'Solicitud no procesada.'},e.status||400)}
 }};
 async function digest(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),x=>x.toString(16).padStart(2,'0')).join('')}
 export class Bodega {
-  constructor(ctx,env){this.ctx=ctx;this.env=env;this.db=new Ledger(ctx.storage.sql)}
+  constructor(ctx,env){this.ctx=ctx;this.env=env;this.db=new Ledger(ctx.storage.sql);this.accessCache={}}
   synchronize(token){
-    if(!this.syncing)this.syncing=syncCloud(this.ctx,this.env,this.db,token).finally(()=>{this.syncing=null});
+    if(!this.syncing)this.syncing=syncCloud(this.ctx,this.env,this.db,token,this.accessCache).finally(()=>{this.syncing=null});
     return this.syncing;
   }
   async alarm(){if(!await this.ctx.storage.get('excel-paused'))await this.synchronize()}
@@ -51,6 +69,7 @@ export class Bodega {
           const {payload}=await jwtVerify(token,keys,{issuer,audience:'0b22855f-0817-4124-8eb7-3e42296b5b17',algorithms:['RS256'],requiredClaims:['exp','sub','nonce']});
           return payload;
         });
+        this.accessCache={};
         await this.ctx.storage.setAlarm(Date.now()+1000);
         return new Response('Cuenta de OneDrive conectada. Puedes volver a Inventario Web.',{headers:{'Content-Type':'text/plain;charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
       }
@@ -82,7 +101,7 @@ export class Bodega {
         const {db}=this, sql=db.sql, admin=subject===this.env.ADMIN_SUB;
         let member=db.first('SELECT email FROM members WHERE subject=?',subject);
         if(path==='/join'&&!member&&!admin){
-          const invite=db.first('SELECT email FROM invites WHERE digest=?',hash);
+          const invite=db.first('SELECT email FROM invites WHERE digest=? AND expires>?',hash,Date.now());
           requireValue(invite&&invite.email===label,'Invitación inválida para esta cuenta.',403);
           sql.exec('INSERT INTO members VALUES(?,?)',subject,label);
           sql.exec('DELETE FROM invites WHERE digest=?',hash);member={email:label};
@@ -115,8 +134,8 @@ export class Bodega {
         }
         if(path==='/attachment'){
           requireValue(uuid(body.id)&&typeof body.data==='string'&&/^data:image\/jpeg;base64,[a-zA-Z0-9+/=]+$/.test(body.data),'Fotografía inválida.');
-          sql.exec('INSERT OR IGNORE INTO photos VALUES(?,?)',body.id,body.data);
-          if(db.first("SELECT value FROM config WHERE key='expireNewPhotos'")?.value==='1')sql.exec('INSERT OR IGNORE INTO receipt_expiry VALUES(?,?)',body.id,Date.now()+30*86400000);
+          const added=sql.exec('INSERT OR IGNORE INTO photos VALUES(?,?)',body.id,body.data).rowsWritten;
+          if(added&&db.first("SELECT value FROM config WHERE key='expireNewPhotos'")?.value==='1')sql.exec('INSERT OR IGNORE INTO receipt_expiry VALUES(?,?)',body.id,Date.now()+30*86400000);
           return {expires:db.first('SELECT expires FROM receipt_expiry WHERE id=?',body.id)?.expires};
         }
         requireValue(admin,'Acceso exclusivo del administrador.',403);
@@ -128,11 +147,11 @@ export class Bodega {
         if(path==='/photo-save'){requireValue(uuid(body.id)&&/^data:image\/jpeg;base64,[a-zA-Z0-9+/=]+$/.test(body.data),'Fotografía inválida.');sql.exec('INSERT OR IGNORE INTO photos VALUES(?,?)',body.id,body.data);return {}}
         if(path==='/import'){requireValue(Array.isArray(body.events)&&body.events.length<=100,'Lote inválido.');for(const e of body.events)db.append(e,user,true);return {}}
         if(path==='/retention'){sql.exec("INSERT OR REPLACE INTO config VALUES('expireNewPhotos',?)",body.enabled===true?'1':'0');return {}}
-        if(path==='/members')return {expiry:db.first("SELECT value FROM config WHERE key='expireNewPhotos'")?.value==='1',active:[...sql.exec('SELECT m.email,s.cargo FROM members m LEFT JOIN staff s ON s.email=m.email ORDER BY m.email')],pending:[...sql.exec('SELECT i.email,s.cargo FROM invites i LEFT JOIN staff s ON s.email=i.email ORDER BY i.email')]};
+        if(path==='/members')return {expiry:db.first("SELECT value FROM config WHERE key='expireNewPhotos'")?.value==='1',active:[...sql.exec('SELECT m.email,s.cargo FROM members m LEFT JOIN staff s ON s.email=m.email ORDER BY m.email')],pending:[...sql.exec('SELECT i.email,s.cargo FROM invites i LEFT JOIN staff s ON s.email=i.email WHERE i.expires>? ORDER BY i.email',Date.now())]};
         const address=String(body.email||'').trim().toLowerCase();
         requireValue(email(address)&&address!==this.env.ADMIN_EMAIL.toLowerCase(),'Correo inválido o reservado.');
         if(path==='/cargo'){requireValue(typeof body.cargo==='string'&&body.cargo.length<=60,'Cargo inválido.');sql.exec('INSERT OR REPLACE INTO staff VALUES(?,?)',address,body.cargo.trim());return {}}
-        if(path==='/invite'){requireValue(!db.first('SELECT email FROM members WHERE email=?',address),'Ya tiene acceso.',409);sql.exec('INSERT OR REPLACE INTO invites VALUES(?,?)',address,hash);return {code:secret}}
+        if(path==='/invite'){requireValue(!db.first('SELECT email FROM members WHERE email=?',address),'Ya tiene acceso.',409);sql.exec('INSERT OR REPLACE INTO invites(email,digest,expires) VALUES(?,?,?)',address,hash,Date.now()+7*86400000);return {code:secret}}
         if(path==='/remove'){sql.exec('DELETE FROM invites WHERE email=?',address);sql.exec('DELETE FROM members WHERE email=?',address);return {}}
         throw Object.assign(new Error('Ruta inexistente.'),{status:404});
       });

@@ -21,7 +21,9 @@ jobs:
         uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
+      - name: Verificar permisos y consistencia de inventario
+        run: npm ci --prefix backend --omit=dev && npm test --prefix backend
       - name: Preparar aplicación y exportación de reportes
         run: |
           npm ci --prefix report-tools

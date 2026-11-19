@@ -8,6 +8,10 @@ export class Ledger {
     this.sql=sql;
     sql.exec('CREATE TABLE IF NOT EXISTS members(subject TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS invites(email TEXT PRIMARY KEY,digest TEXT UNIQUE NOT NULL)');
+    if(![...sql.exec('PRAGMA table_info(invites)')].some(c=>c.name==='expires')){
+      sql.exec('ALTER TABLE invites ADD COLUMN expires INTEGER');
+    }
+    sql.exec('UPDATE invites SET expires=? WHERE expires IS NULL',Date.now()+7*86400000);
     sql.exec('CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY,id TEXT UNIQUE NOT NULL,subject TEXT NOT NULL,payload TEXT NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY,code TEXT NOT NULL COLLATE NOCASE,stock INTEGER NOT NULL,deleted INTEGER NOT NULL)');
     sql.exec('CREATE UNIQUE INDEX IF NOT EXISTS active_codes ON products(code) WHERE deleted=0');

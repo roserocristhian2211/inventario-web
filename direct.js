@@ -1,4 +1,4 @@
-import {destinations,familyOf} from './reports.js?v=12';
+import {destinations,familyOf} from './reports.js?v=19';
 
 export function measurements(events){
   const current=new Map();
@@ -69,7 +69,7 @@ export function installDirect(ctx){
   }
   const select=(name,options)=>'<select name="'+name+'">'+options+'</select>';
   const controls=()=>new FormData(dialog.querySelector('form'));
-  const exportSheets=async(name,sheets)=>(await import('./report-vendor.js?v=12')).exportSheets(name,sheets);
+  const exportSheets=async(name,sheets)=>(await import('./report-vendor.js?v=19')).exportSheets(name,sheets);
   const direct=()=>products().filter(p=>p.cat==='directo');
   const current=()=>direct().filter(p=>!p.deleted);
   const directMoves=()=>{const ids=new Set(direct().map(p=>p.id));return moves().filter(m=>ids.has(m.data.pid))};
@@ -147,10 +147,10 @@ export function installDirect(ctx){
     const sheets=['entrada','salida'].map(t=>({name:t==='entrada'?'Entradas':'Salidas',rows:[[t==='entrada'?'Nro. Documento':'PSC/PRE','Fecha','Codigo Producto','Descripción','Medida','Cantidad','IdMovimiento'],...directMoves().filter(m=>m.type===t).map(m=>[t==='entrada'?m.data.doc:m.data.dest,m.date,m.code,m.prod,m.unit,m.q,m.id])]}));
     return [stock,...sheets,countSheet()]}
   on('#book-export',()=>exportSheets('Inventario-directo-'+today(),workbook()));
-  on('#book-drive',async()=>{const {workbookBlob}=await import('./report-vendor.js?v=12');await ctx.uploadBook(await workbookBlob(workbook()));toast('Libro guardado en Respaldos Inventario Web.')});
+  on('#book-drive',async()=>{const {workbookBlob}=await import('./report-vendor.js?v=19');await ctx.uploadBook(await workbookBlob(workbook()));toast('Libro guardado en Respaldos Inventario Web.')});
   $('#book-file').onchange=async e=>{
     const file=e.target.files[0];e.target.value='';if(!admin()||!file)return;
-    try{const {readSheets}=await import('./report-vendor.js?v=12');const plan=ctx.planInventoryImport(await readSheets(file),current(),directMoves(),record);
+    try{const {readSheets}=await import('./report-vendor.js?v=19');const plan=ctx.planInventoryImport(await readSheets(file),current(),directMoves(),record);
       open('Importar inventario','<p>'+escape(file.name)+'</p><p>'+plan.added+' productos nuevos · '+plan.batch.filter(e=>['entrada','salida'].includes(e.type)).length+' movimientos nuevos · '+plan.skipped+' movimientos existentes.</p>'+button('book-confirm','Incorporar registros'));
       $('#book-confirm').disabled=!plan.batch.length;
       on('#book-confirm',async()=>{while(plan.batch.length){const part=plan.batch.slice(0,100);await save(part);plan.batch.splice(0,part.length)}dialog.close();toast('Inventario incorporado.')});

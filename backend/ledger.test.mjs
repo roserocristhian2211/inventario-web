@@ -35,6 +35,11 @@ test('alta por invitación, revocación inmediata y administrador único',async(
  assert.equal((await call('me','intruder','owner@example.test')).status,403);
  const {code}=await (await call('invite',owner,'owner@example.test',{email:address})).json();
  assert.ok(code);
+ const expiring='caduca@example.test';
+ const issued=await (await call('invite',owner,'owner@example.test',{email:expiring})).json();
+ sql.exec('UPDATE invites SET expires=? WHERE email=?',Date.now()-1,expiring);
+ assert.equal((await call('join','expired',expiring,{code:issued.code})).status,403);
+ assert.equal((await (await call('members',owner,'owner@example.test')).json()).pending.some(x=>x.email===expiring),false);
  assert.equal((await call('join','other','other@example.test',{code})).status,403);
  assert.equal((await (await call('join','member',address,{code})).json()).role,'operador');
  assert.equal((await call('join','new',address,{code})).status,403);
