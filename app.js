@@ -211,7 +211,7 @@ function openEditor(kind,pid=null,initial='entrada'){let p=inventory.find(x=>x.i
 if(kind==='producto'){$('#modal-title').textContent=p?'Editar producto':'Nuevo producto';h+=field('Código','code',p?.code||'','text','required maxlength="35"')+field('Descripción','name',p?.name||'','text','required maxlength="160"');h+=select('Medida','unit',[...new Set(['SC','KG','LT','UND','CJ','PZ','GL','M',...(p?[p.unit]:[])])].map(x=>[x,x]),p?.unit||'SC');
 if(!p)h+=field('Inventario inicial','opening',0,'number','required min="0" step="any"');h+='<details class="product-options" '+(p?'open':'')+'><summary>Más opciones del producto</summary>'+select('Grupo','family',[['balanceado','Balanceado'],['insumo','Insumo']],p?familyOf(p):'insumo')+field('Libras por saco de balanceado (opcional)','lbs',p?.lbPerSack||'','number','min="0.000001" step="any"');
 h+=field('Existencia mínima','min',p?.min??0,'number','required min="0" step="any"');h+='<label>Fotografía (opcional)<input type="file" name="picture" accept="image/jpeg,image/png,image/webp"></label></details>'}
-if(kind==='movimiento'){if(!active().length){toast('Primero agrega un producto.',true);return}$('#modal-title').textContent='Registrar movimiento';h+='<div class="switchbar" role="radiogroup" aria-label="Tipo de movimiento">'+[['entrada','Entrada'],['salida','Salida'],...(canManage()?[['traspaso','Traspaso']]:[])].map(([key,label])=>'<label><input type="radio" name="type" value="'+key+'" '+(key===initial?'checked':'')+'><span>'+label+'</span></label>').join('')+'</div>'+'<div id="movement-fields"></div>'}
+if(kind==='movimiento'){if(!active().length){toast('Primero agrega un producto.',true);return}$('#modal-title').textContent='Registrar movimiento';h+='<div class="switchbar" role="radiogroup" aria-label="Tipo de movimiento">'+[['entrada','Entrada'],['salida','Salida']].map(([key,label])=>'<label><input type="radio" name="type" value="'+key+'" '+(key===initial?'checked':'')+'><span>'+label+'</span></label>').join('')+'</div>'+'<div id="movement-fields"></div>'}
 
 if(kind==='conteo'){if(!p)return;$('#modal-title').textContent='Conteo físico';h+='<div class="note">'+esc(p.name)+' · Existencia: '+fmt(p.stock)+' '+esc(p.unit)+'</div>'+field('Cantidad encontrada','q',p.stock,'number','required min="0" step="any"')+field('Observación','note','Conteo físico','text','maxlength="180"')}
 $('#modal').dataset.editor=kind;$('#fields').innerHTML=h;if(kind==='movimiento'){drawMovement(initial,pid);$('#fields .switchbar').onchange=e=>drawMovement(e.target.value,pid)}$('#modal').showModal()}
@@ -227,7 +227,7 @@ if(!pid&&opening>0)batch.push(record('ajuste',{pid:productId,q:opening,expected:
 await saveBatch(batch);await reload()}
 if(kind==='movimiento'){await submitMovement(f);await reload()}
 if(kind==='conteo'){let p=active().find(x=>x.id===pid),q=number(v('q'));if(!p||q<0)throw Error('La cantidad no puede ser negativa.');await saveEvent('ajuste',{pid,q:q-(TEAM_API?editor.expected:p.stock),expected:editor.expected,note:v('note'),doc:'CONTEO'})}
-$('#modal').close();if(kind==='movimiento'&&$('#direct-dialog').open)$('#direct-dialog').close();if(kind!=='movimiento'||v('type')==='traspaso')toast(TEAM_API?'Registro confirmado en la bodega.':'Registro guardado en este dispositivo.');scheduleSync()}catch(err){fail(err)}finally{submit.disabled=false}}
+$('#modal').close();if(kind==='movimiento'&&$('#direct-dialog').open)$('#direct-dialog').close();if(kind!=='movimiento')toast(TEAM_API?'Registro confirmado en la bodega.':'Registro guardado en este dispositivo.');scheduleSync()}catch(err){fail(err)}finally{submit.disabled=false}}
 async function exportJSON(){let json=JSON.stringify({format:'inventario-web-independent-v1',fecha:new Date().toISOString(),events,photos},null,2);download('respaldo-inventario-'+today()+'.json',json,'application/json')}
 function download(name,body,type){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([body],{type}));a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),3000)}
 function csvEscape(x){let s=String(x??'');return /[;"\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}
@@ -450,7 +450,7 @@ function drawMovement(type,pid){
     const add=()=>{const rows=$('#entry-lines');if(rows.children.length>=100)return;const row=document.createElement('fieldset');row.innerHTML=product(rows.children.length?null:selected)+quantity()+'<output class="line-stock"></output><button type="button" class="small">Quitar</button>';rows.append(row);row.querySelector('button').onclick=()=>{if(rows.children.length>1)row.remove();$('#add-line').disabled=false};$('#add-line').disabled=rows.children.length>=100};
     $('#add-line').onclick=add;add();
   }else{
-    area.insertAdjacentHTML('beforeend',product(selected)+'<p id="stock-preview" class="note"></p>'+quantity()+(type==='traspaso'?field('Origen','origin','','text','required maxlength="80"'):'')+'<fieldset><legend>Destino obligatorio</legend>'+['Piscina (PSC)','Precría (PRE)'].map((label,i)=>'<strong>'+label+'</strong><div class="ponds">'+destinations.filter(x=>x.startsWith('PRE')===!!i).map(d=>'<label><input type="radio" name="dest" value="'+d+'" required><span>'+d+'</span></label>').join('')+'</div>').join('')+'</fieldset><p id="balance-preview" class="note"></p>');
+    area.insertAdjacentHTML('beforeend',product(selected)+'<p id="stock-preview" class="note"></p>'+quantity()+'<fieldset><legend>Destino obligatorio</legend>'+['Piscina (PSC)','Precría (PRE)'].map((label,i)=>'<strong>'+label+'</strong><div class="ponds">'+destinations.filter(x=>x.startsWith('PRE')===!!i).map(d=>'<label><input type="radio" name="dest" value="'+d+'" required><span>'+d+'</span></label>').join('')+'</div>').join('')+'</fieldset><p id="balance-preview" class="note"></p>');
     const preview=()=>{const p=findProduct(area.querySelector('[name=product]').value),q=Number(area.querySelector('[name=q]').value);$('#stock-preview').textContent=p?'Stock actual: '+fmt(p.stock)+' '+p.unit:'';$('#balance-preview').textContent=p&&type==='salida'&&q>0?'Quedará en '+fmt(p.stock-q)+' '+p.unit:''};
     area.oninput=preview;preview();
   }
@@ -461,11 +461,11 @@ function drawMovement(type,pid){
 function findProduct(value){return active().find(p=>[p.code,p.code+' · '+p.name].some(s=>s.toLowerCase()===value.trim().toLowerCase()))}
 async function submitMovement(form){
   const val=k=>String(form.get(k)||'').trim(),type=val('type'),quantities=form.getAll('q');
+  if(!['entrada','salida'].includes(type))throw Error('Selecciona Entrada o Salida.');
   const batch=form.getAll('product').map((value,i)=>{
     const p=findProduct(value),q=Number(quantities[i]);if(!p||!Number.isFinite(q)||q<=0)throw Error('Selecciona un producto del catálogo y una cantidad positiva.');
     if(type==='salida'&&q>p.stock)throw Error('Stock insuficiente para '+p.name);
     if(type!=='entrada'&&!destinations.includes(val('dest')))throw Error('Selecciona una piscina o precría.');
-    if(type==='traspaso'&&val('origin')===val('dest'))throw Error('Selecciona destinos distintos.');
     const e=record(type,{pid:p.id,q,doc:val('doc'),origin:val('origin'),dest:val('dest'),note:val('note')});e.date=val('date');return e;
   });
   if(type==='entrada'){editor.group??=uid();for(const e of batch)e.data.group=editor.group}
@@ -478,5 +478,5 @@ async function submitMovement(form){
   }
   if(ids.length)for(const e of batch)e.data.attachments=ids;
   await saveBatch(batch);
-  if(TEAM_API&&!navigator.onLine)toast('Guardado en este dispositivo. Pendiente de confirmar en bodega.');else if(type!=='traspaso')notifyMove(batch[0],active().find(p=>p.id===batch[0].data.pid));
+  if(TEAM_API&&!navigator.onLine)toast('Guardado en este dispositivo. Pendiente de confirmar en bodega.');else notifyMove(batch[0],active().find(p=>p.id===batch[0].data.pid));
 }
