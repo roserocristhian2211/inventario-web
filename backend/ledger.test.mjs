@@ -98,19 +98,19 @@ test('conteo de operador, traspaso porcentual y corrección de entrada conservan
 test('BASE en OneDrive personal confirma el mismo archivo y respeta cambios concurrentes',async t=>{
   const {publish}=await import('./cloud-sync.mjs');
   const file={id:'base',eTag:'v1',parentReference:{id:'folder'}};
-  const requests=[];
-  let conflict=false;
+  let latest='v1',status=200,writes=0;
   t.mock.method(globalThis,'fetch',async(url,options)=>{
-    requests.push([url,options]);
-    if(url.endsWith('/createUploadSession'))return Response.json({uploadUrl:'https://upload.test/session'});
-    if(url==='https://upload.test/session')return new Response(null,{status:202});
-    assert.ok(url.endsWith('/items/folder'));
+    if(url.endsWith('?$select=id,name,eTag'))return Response.json({id:'base',name:'BASE.xlsm',eTag:latest});
+    assert.ok(url.endsWith('/items/base/content'));
     assert.equal(options.headers['If-Match'],'v1');
-    assert.equal(JSON.parse(options.body).name,'BASE.xlsm');
-    return conflict?new Response(null,{status:412}):Response.json({id:'base',eTag:'v2'});
+    assert.deepEqual([...options.body],[1,2]);
+    writes++;
+    return status===200?Response.json({id:'base',eTag:'v2',size:2}):Response.json({error:{code:'resourceLocked'}},{status});
   });
-  assert.equal(await publish('drive',file,{},new Uint8Array([1,2])),'v2');
-  assert.equal(requests.length,3);
-  conflict=true;
-  await assert.rejects(publish('drive',file,{},new Uint8Array([3])),/412/);
+  const save=()=>publish('drive',file,{},new Uint8Array([1,2]));
+  assert.equal(await save(),'v2');
+  latest='v3';await assert.rejects(save(),/cambió antes de guardar/);
+  assert.equal(writes,1);
+  latest='v1';status=409;await assert.rejects(save(),/409 al guardar BASE .resourceLocked/);
+  status=412;await assert.rejects(save(),/412/);
 });

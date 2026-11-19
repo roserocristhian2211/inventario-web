@@ -3,29 +3,26 @@ import {authorizeSync} from './onedrive.mjs';
 import {requireValue} from './ledger.mjs';
 
 const period=60000;
-const assertGraph=r=>{
-  const messages={401:'Vuelve a iniciar sesión con Microsoft.',403:'Comprueba que la cuenta administradora tenga permiso de edición.',404:'Revisa que BASE.xlsm esté en Inventario Web Independiente del OneDrive administrador.',409:'Hay un conflicto al actualizar BASE. Se volverá a leer la versión de OneDrive.',412:'El libro cambió durante la sincronización. Se reintentará.',423:'El libro está bloqueado. Guarda los cambios y cierra Excel para reintentar.'};
-  requireValue(r.ok,'OneDrive '+r.status+'. '+(messages[r.status]||'Se reintentará la sincronización.'),r.status);
-};
+async function assertGraph(response,step){
+  if(response.ok)return;
+  const error=(await response.json().catch(()=>({})))?.error;
+  const code=String(error?.innerError?.code||error?.code||'').replace(/[^a-zA-Z0-9_.-]/g,'').slice(0,64);
+  const messages={401:'Revisa la autorización de Microsoft.',403:'Revisa el permiso de edición.',404:'No se encontró BASE.xlsm.',412:'La versión cambió. Se volverá a leer BASE.'};
+  const locked=response.status===423||/lock/i.test(code);
+  const message=locked?'Guarda y cierra BASE en Excel. Se reintentará automáticamente.':messages[response.status]||'Se volverá a intentar automáticamente.';
+  requireValue(false,'OneDrive '+response.status+' al '+step+(code?' ('+code+')':'')+'. '+message,response.status);
+}
 export async function publish(drive,file,headers,bytes){
-  const tag=file.eTag,parent=file.parentReference?.id;
-  requireValue(parent,'OneDrive no identificó la carpeta de BASE.xlsm.',409);
-  const items='https://graph.microsoft.com/v1.0/drives/'+encodeURIComponent(drive)+'/items/';
-  const url=items+encodeURIComponent(file.id);
-  const session=await fetch(url+'/createUploadSession',{method:'POST',headers:{...headers,'Content-Type':'application/json','If-Match':tag},body:JSON.stringify({deferCommit:true,item:{'@microsoft.graph.conflictBehavior':'replace'}})});
-  assertGraph(session);
-  const {uploadUrl}=await session.json();
-  const sent=await fetch(uploadUrl,{method:'PUT',headers:{'Content-Range':'bytes 0-'+(bytes.length-1)+'/'+bytes.length},body:bytes});
-  assertGraph(sent);
-  function confirmed(item){
-    requireValue(item.id===file.id&&item.eTag,'OneDrive no confirmó la versión de BASE.xlsm.',409);
-    return item.eTag;
-  }
-  if(sent.status===200||sent.status===201)return confirmed(await sent.json());
-  requireValue(sent.status===202,'OneDrive no confirmó la carga diferida.',409);
-  const commit=await fetch(items+encodeURIComponent(parent),{method:'PUT',headers:{...headers,'If-Match':tag,'Content-Type':'application/json'},body:JSON.stringify({name:'BASE.xlsm','@microsoft.graph.sourceUrl':uploadUrl,'@microsoft.graph.conflictBehavior':'replace'})});
-  assertGraph(commit);
-  return confirmed(await commit.json());
+  const url='https://graph.microsoft.com/v1.0/drives/'+encodeURIComponent(drive)+'/items/'+encodeURIComponent(file.id);
+  const current=await fetch(url+'?$select=id,name,eTag',{headers});
+  await assertGraph(current,'comprobar la versión');
+  const version=await current.json();
+  requireValue(version.id===file.id&&version.name==='BASE.xlsm'&&version.eTag===file.eTag,'BASE cambió antes de guardar. Se volverá a leer.',412);
+  const saved=await fetch(url+'/content',{method:'PUT',headers:{...headers,'If-Match':file.eTag,'Content-Type':'application/octet-stream'},body:bytes});
+  await assertGraph(saved,'guardar BASE');
+  const item=await saved.json();
+  requireValue(item.id===file.id&&item.eTag&&item.size===bytes.length,'OneDrive no confirmó el archivo completo. Se volverá a comprobar.',409);
+  return item.eTag;
 }
 
 function applyChange(db,{id,movement:m},admin){
@@ -61,7 +58,7 @@ export async function syncCloud(ctx,env,db,sessionToken,accessCache={}){
     const bound=connection||await store.get('onedrive-owner-file');
     const url=bound?'https://graph.microsoft.com/v1.0/drives/'+encodeURIComponent(bound.drive)+'/items/'+encodeURIComponent(bound.item):
       'https://graph.microsoft.com/v1.0/me/drive/root:/Inventario%20Web%20Independiente/BASE.xlsm';
-    const meta=await fetch(url,{headers});assertGraph(meta);
+    const meta=await fetch(url,{headers});await assertGraph(meta,'localizar BASE');
     const file=await meta.json(),seq=db.first('SELECT MAX(seq) n FROM events').n||0;
     requireValue(file.name==='BASE.xlsm'&&file.size<=5*1024*1024&&file.eTag&&file['@microsoft.graph.downloadUrl'],'Revisa nombre, versión y tamaño de BASE.xlsm.',409);
     const drive=file.parentReference?.driveId,item=file.id;
@@ -70,7 +67,7 @@ export async function syncCloud(ctx,env,db,sessionToken,accessCache={}){
     const itemUrl='https://graph.microsoft.com/v1.0/drives/'+encodeURIComponent(drive)+'/items/'+encodeURIComponent(item);
     const last=await store.get('onedrive-checkpoint');
     if(last?.version===2&&last.drive===drive&&last.item===item&&last.tag===file.eTag&&last.seq===seq){await store.put('onedrive-status','Al día');return 'Al día'}
-    const download=await fetch(file['@microsoft.graph.downloadUrl']);assertGraph(download);
+    const download=await fetch(file['@microsoft.graph.downloadUrl']);await assertGraph(download,'leer BASE');
     const events=[...db.sql.exec('SELECT payload FROM events ORDER BY seq')].map(r=>JSON.parse(r.payload));
     db.sql.exec('CREATE TABLE IF NOT EXISTS workbook_links(id TEXT PRIMARY KEY,signature TEXT NOT NULL)');
     const linked=new Map([...db.sql.exec('SELECT id,signature FROM workbook_links')].map(r=>[r.id,r.signature]));
@@ -104,7 +101,7 @@ export async function syncCloud(ctx,env,db,sessionToken,accessCache={}){
     }
     let tag=file.eTag;
     if(result.bytes)tag=await publish(drive,file,headers,result.bytes);
-    else{const latest=await fetch(itemUrl+'?$select=eTag',{headers});assertGraph(latest);requireValue((await latest.json()).eTag===tag,'BASE cambió durante la lectura.',409)}
+    else{const latest=await fetch(itemUrl+'?$select=eTag',{headers});await assertGraph(latest,'verificar BASE');requireValue((await latest.json()).eTag===tag,'BASE cambió durante la lectura.',409)}
     const committed=store.transactionSync(()=>{
       const byId=apply();
       for(const [id,fields] of result.productsSeen){
