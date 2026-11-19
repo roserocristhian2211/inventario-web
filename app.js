@@ -165,18 +165,67 @@ const pic=id=>photos.find(x=>x.id===id)?.data||'';
 function productRow(p,actions){let state=p.stock<=0?'<span class="tag danger">Agotado</span>':p.min>0&&p.stock<p.min?'<span class="tag warning">Bajo mínimo</span>':'<span class="tag">Disponible</span>';if(actions&&!canManage())return productRow(p,false).replace('</h3>','</h3><button class="small" data-move="'+esc(p.id)+'">Movimiento</button>');let buttons=actions?'<div class="item-buttons"><button data-edit="'+esc(p.id)+'">Editar</button><button data-move="'+esc(p.id)+'">Movimiento</button><button class="danger" data-delete="'+esc(p.id)+'">Eliminar</button></div>':'';return '<div class="item">'+(p.photo?'<img class="thumb" src="'+esc(pic(p.photo))+'" alt="Foto del producto">':'')+'<div class="item-body"><h3>'+'<button class="product-link" data-card="'+esc(p.id)+'">'+esc(p.name)+'</button></h3><p>'+esc(p.code)+' · '+esc(p.unit)+' · '+'Material directo'+'</p>'+buttons+'</div><div class="quantity"><strong>'+fmt(p.stock)+'</strong><small>'+esc(p.unit)+'</small>'+state+'</div></div>'}
 function empty(t){return '<div class="empty">'+esc(t)+'</div>'}
 function moveRow(m){const detail=['entrada','salida'].includes(m.type)?'<button class="small" data-detail="'+esc(m.id)+'">Ver detalle</button>':'';const controls=detail+(m.type==='salida'&&canManage()?'<button class="small danger" data-void="'+esc(m.id)+'">Eliminar salida</button>':'')+(m.data.attachments||[]).map((id,i)=>'<button class="small" data-picture="'+esc(id)+'">Foto '+(i+1)+'</button>').join('');let q=m.type==='salida'?'-':m.type==='entrada'?'+':m.type==='ajuste'&&m.q>=0?'+':'';return '<div class="item"><div class="item-body"><h3>'+esc(m.prod)+'</h3><p>'+esc(m.date)+(m.data.actor?' · '+esc(m.data.actor):'')+' · '+esc(m.data.doc||'Sin documento')+' · '+esc(m.data.origin||'')+(m.data.dest?' → '+esc(m.data.dest):'')+'</p><span class="tag">'+esc(m.type.toUpperCase())+'</span>'+controls+'</div><div class="quantity"><strong>'+q+fmt(m.q)+'</strong><small>'+esc(m.unit)+'</small></div></div>'}
+const ledgerDate=new Intl.DateTimeFormat('es-EC',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'});
+function ledgerDay(date){
+  const timestamp=Date.parse(date+'T00:00:00Z');
+  return Number.isFinite(timestamp)?ledgerDate.format(timestamp):date;
+}
+function ledgerCard(m,day){
+  if(m.type!=='entrada'&&m.type!=='salida')return moveRow(m);
+  const inbound=m.type==='entrada';
+  const metadata=[inbound?'Entrada':'Salida',m.data.doc&&('Doc '+m.data.doc),m.data.dest,day,m.data.actor].filter(Boolean);
+  const photos=(m.data.attachments||[]).map((id,i)=>'<button class="small" data-picture="'+esc(id)+'">Foto '+(i+1)+'</button>').join('');
+  return '<article class="ledger-card"><button class="ledger-record" data-detail="'+esc(m.id)+'"><span><strong>'+esc(m.prod)+'</strong><small>'+esc(metadata.join(' · '))+'</small></span><span class="ledger-qty '+(inbound?'received':'issued')+'"><b>'+(inbound?'+':'−')+fmt(m.q)+'</b><small>'+esc(m.unit)+'</small></span></button>'+photos+'</article>';
+}
+function renderLedger(){
+  const type=$('#filter-type').value,query=$('#find-move').value.trim().toLowerCase();
+  const from=$('#moves-from').value,to=$('#moves-to').value,pond=$('#ledger-pond').value;
+  const direct=new Set(inventory.filter(p=>p.cat==='directo').map(p=>p.id));
+  const rows=moves.filter(m=>direct.has(m.data.pid)&&(type==='todos'||type===m.type)&&(!from||m.date>=from)&&(!to||m.date<=to)&&(!pond||m.data.dest===pond)&&[m.prod,m.code,m.data.doc,m.data.origin,m.data.dest,m.date].some(v=>String(v??'').toLowerCase().includes(query)));
+  for(const tab of $$('[data-ledger-type]'))tab.setAttribute('aria-pressed',String(tab.dataset.ledgerType===type));
+  $('#movement-count').textContent=rows.length+(rows.length===1?' registro':' registros');
+  const totals=new Map();
+  for(const m of rows){
+    const key=(type==='todos'?m.type+' · ':'')+m.unit;
+    totals.set(key,(totals.get(key)||0)+m.q);
+  }
+  $('#move-totals').textContent=from&&to&&from>to?'La fecha final debe ser igual o posterior a la inicial.':'Total en vista: '+([...totals].map(([unit,q])=>fmt(q)+' '+unit).join(' / ')||'0');
+  let previous=null;
+  $('#moves').innerHTML=rows.slice(0,moveLimit).map(m=>{
+    const day=ledgerDay(m.date),heading=previous!==m.date?'<h3 class="ledger-day">'+esc(day)+'</h3>':'';
+    previous=m.date;
+    return heading+ledgerCard(m,day);
+  }).join('')||empty('Sin movimientos para estos filtros.');
+  $('#more-moves').hidden=rows.length<=moveLimit;
+}
+function setupLedger(){
+  const type=$('#filter-type'),pond=$('#ledger-pond'),panel=$('#pond-filter'),toggle=$('#pond-filter-toggle');
+  for(const dest of destinations)pond.add(new Option(dest,dest));
+  function clearPond(){panel.hidden=true;pond.value='';toggle.setAttribute('aria-expanded','false')}
+  function refresh(){moveLimit=80;render()}
+  for(const tab of $$('[data-ledger-type]'))tab.onclick=()=>{
+    type.value=tab.dataset.ledgerType;
+    if(type.value!=='salida')clearPond();
+    refresh();
+  };
+  type.oninput=()=>{if(type.value!=='salida')clearPond();refresh()};
+  toggle.onclick=()=>{
+    if(panel.hidden){panel.hidden=false;type.value='salida';toggle.setAttribute('aria-expanded','true');pond.focus()}
+    else clearPond();
+    refresh();
+  };
+  pond.onchange=refresh;
+  $('#import-toggle').onclick=e=>{
+    const form=$('#movement-import');form.hidden=!form.hidden;
+    e.currentTarget.setAttribute('aria-expanded',String(!form.hidden));
+  };
+}
 function render(){if(!session?.profile)return;let pp=active(),todayN=moves.filter(m=>m.date===today()&&inventory.find(x=>x.id===m.data.pid)?.cat==='directo').length;
 $('#n-products').textContent=pp.length;$('#n-out').textContent=pp.filter(p=>p.stock<=0).length;$('#n-low').textContent=pp.filter(p=>p.min>0&&p.stock>0&&p.stock<p.min).length;$('#n-today').textContent=todayN;
 $('#attention').innerHTML=pp.filter(p=>p.stock<=0||(p.min>0&&p.stock<p.min)).map(p=>productRow(p,false)).join('')||empty('No hay productos con alertas.');
 let term=$('#find-product').value.toLowerCase();
 $('#products').innerHTML=active().filter(p=>({all:true,alert:p.stock<=0||p.stock<p.min,out:p.stock<=0,low:p.stock>0&&p.stock<p.min,available:p.stock>0,SC:p.unit==='SC',LT:p.unit==='LT',KG:p.unit==='KG'}[$('#stock-filter').value])&&(p.name.toLowerCase().includes(term)||p.code.toLowerCase().includes(term))).map(p=>productRow(p,true)).join('')||empty('No hay productos. Puedes agregar uno nuevo.');
-let query=$('#find-move').value.toLowerCase(),type=$('#filter-type').value;
-const visibleMoves=moves.filter(m=>inventory.find(p=>p.id===m.data.pid)?.cat==='directo'&&(!$('#moves-from').value||m.date>=$('#moves-from').value)&&(!$('#moves-to').value||m.date<=$('#moves-to').value)&&(type==='todos'||type===m.type)&&[m.prod,m.code,m.data.doc,m.data.origin,m.data.dest,m.date].some(v=>String(v||'').toLowerCase().includes(query)));
-const unitTotals=new Map();for(const m of visibleMoves){const k=m.type+' · '+m.unit;unitTotals.set(k,(unitTotals.get(k)||0)+m.q)}
-$('#move-totals').textContent=visibleMoves.length+' registros · '+[...unitTotals].map(([k,v])=>k+' '+fmt(v)).join(' / ');
-$('#moves').innerHTML=visibleMoves.slice(0,moveLimit).map(moveRow).join('')||empty('Sin movimientos para este filtro.');
-$('#more-moves').hidden=visibleMoves.length<=moveLimit;
-
+renderLedger();
 if(refreshCounts)refreshCounts();
 $('#counts').innerHTML=active().map(p=>'<div class="item"><div class="item-body"><h3>'+esc(p.name)+'</h3><p>'+esc(p.code)+' · '+esc(p.unit)+'</p></div><div class="quantity"><strong>'+fmt(p.stock)+'</strong><button class="small" data-count="'+esc(p.id)+'">Contar</button></div></div>').join('')||empty('Registra productos para hacer un conteo.');
 $('#appname').textContent=settings.name && settings.name!=='Inventario Web'?settings.name:'Inventario camaronera';
@@ -372,10 +421,11 @@ function setup(){
   $('#session-remember').onchange=e=>{const remember=e.target.checked;setSession({...session,remember});(remember?sessionStorage:localStorage).removeItem(SESSION_KEY)};
   $('#cloud-link').onclick=()=>show('onedrive');
   setupSettingsMenu();
+  setupLedger();
   $('#more-moves').onclick=()=>{moveLimit+=80;render()};
   for(const [id,filter] of [['#n-products','all'],['#n-out','out'],['#n-low','low'],['#n-today','today']]){
     const card=$(id).closest('article');card.tabIndex=0;card.setAttribute('role','button');
-    const go=()=>{if(filter==='today'){$('#moves-from').value=$('#moves-to').value=today();$('#find-move').value='';$('#filter-type').value='todos';show('movimientos')}else{$('#find-product').value='';$('#stock-filter').value=filter;show('productos')}};
+    const go=()=>{if(filter==='today'){$('#moves-from').value=$('#moves-to').value=today();$('#find-move').value='';$('#filter-type').value='todos';$('#filter-type').dispatchEvent(new Event('input'));show('movimientos')}else{$('#find-product').value='';$('#stock-filter').value=filter;show('productos')}};
     card.onclick=go;card.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}};
   }
   $('#view-attention').onclick=()=>{$('#stock-filter').value='alert';$('#find-product').value='';show('productos')};
@@ -391,7 +441,7 @@ function setup(){
   });
  $$('.navitem').forEach(x=>x.onclick=()=>show(x.dataset.page));$$('[data-action]').forEach(x=>x.onclick=()=>openEditor(x.dataset.action));$('#editor').addEventListener('submit',submitEditor);$('#close').onclick=$('#cancel').onclick=()=>$('#modal').close();
 document.addEventListener('click',async e=>{let t=e.target.closest('[data-edit],[data-move],[data-delete],[data-count]');if(!t)return;try{if(t.dataset.edit)openEditor('producto',t.dataset.edit);if(t.dataset.move)openEditor('movimiento',t.dataset.move);if(t.dataset.count)openEditor('conteo',t.dataset.count);if(t.dataset.delete){let p=inventory.find(x=>x.id===t.dataset.delete);if(p&&confirm('¿Dar de baja el producto '+p.name+'? Sus movimientos se conservarán.'))await saveEvent('delete',{pid:p.id})}}catch(err){fail(err)}});
-['#find-product','#find-move','#filter-type','#moves-from','#moves-to'].forEach(s=>$(s).addEventListener('input',()=>{moveLimit=80;render()}));
+['#find-product','#find-move','#moves-from','#moves-to'].forEach(s=>$(s).addEventListener('input',()=>{moveLimit=80;render()}));
 $('#save-name').onclick=async()=>{try{if(TEAM_API)await teamCall('/name',{name:$('#name').value.trim()||'Inventario Web'});await setting('name',$('#name').value.trim()||'Inventario Web');render();toast('Nombre guardado')}catch(error){fail(error)}};
 $('#export-json').onclick=exportJSON;$('#export-csv').onclick=exportCSV;
 $('#import-csv').onchange=async e=>{try{if(e.target.files[0])await importCSV(e.target.files[0])}catch(err){fail(err)}e.target.value=''};
