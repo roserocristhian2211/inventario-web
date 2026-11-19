@@ -74,6 +74,13 @@ export async function syncCloud(ctx,env,db,sessionToken,accessCache={}){
     db.sql.exec('CREATE TABLE IF NOT EXISTS workbook_products(id TEXT PRIMARY KEY,baseline TEXT NOT NULL)');
     const productLinks=new Map([...db.sql.exec('SELECT id,baseline FROM workbook_products')].map(r=>[r.id,JSON.parse(r.baseline)]));
     const result=reconcileWorkbook(new Uint8Array(await download.arrayBuffer()),events,linked,productLinks);
+    if(result.cancellations.length){
+      requireValue(last?.drive===drive&&last.item===item,'Verifica el libro vinculado antes de importar eliminaciones.',409);
+      const owner=await fetch('https://graph.microsoft.com/v1.0/me/drive?$select=id,owner',{headers});
+      await assertGraph(owner,'verificar el propietario');
+      const account=await owner.json();
+      requireValue(account.id===drive&&account.owner?.user?.id&&account.owner.user.id.toLowerCase()===file.lastModifiedBy?.user?.id?.toLowerCase(),'Solo el administrador de la bodega puede confirmar eliminaciones en BASE.',403);
+    }
     const admin={subject:env.ADMIN_SUB,email:env.ADMIN_EMAIL,role:'admin'};
     function apply(){
       requireValue((db.first('SELECT MAX(seq) n FROM events').n||0)===seq,'La bodega cambió durante la lectura. Reintentando.',409);
@@ -82,7 +89,10 @@ export async function syncCloud(ctx,env,db,sessionToken,accessCache={}){
         if(event.type==='ajuste')event.data.expected=db.first('SELECT stock FROM products WHERE id=?',event.data.pid).stock/1e6;
         db.append(event,admin);
       }
+      // Restore dispatched units before reversing receipts in the same Excel edit.
+      for(const event of result.cancellations.filter(e=>e.targetType==='salida'))db.append(event,admin);
       for(const change of result.changes)byId.set(change.id,applyChange(db,change,admin));
+      for(const event of result.cancellations.filter(e=>e.targetType==='entrada'))db.append(event,admin);
       for(const op of result.operations){
         const before=byId.get(op.id);
         if(!before){db.append(op,admin);continue}
@@ -95,7 +105,7 @@ export async function syncCloud(ctx,env,db,sessionToken,accessCache={}){
       return byId;
     }
     // Validate the merge against stock and uniqueness constraints before writing OneDrive.
-    if(result.productEvents.length||result.changes.length||result.operations.length){
+    if(result.cancellations.length||result.productEvents.length||result.changes.length||result.operations.length){
       const rollback=new Error('Validación completada');
       try{store.transactionSync(()=>{apply();throw rollback})}catch(error){if(error!==rollback)throw error}
     }

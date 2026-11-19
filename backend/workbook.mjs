@@ -110,7 +110,7 @@ export function reconcileWorkbook(bytes,events,linked,productLinks=new Map()){
   const stockRange=table.getAttribute('ref').match(/^B3:[JKNO](\d+)$/);
   check(stockRange&&table.getAttribute('name')==='INVENTARIO','Revisa la tabla INVENTARIO de BASE');
   let stockEnd=+stockRange[1],stockDirty=false;
-  const changes=[],productEvents=[],productsSeen=new Map(),seen=new Set(),legacy=new Map(),totals=new Map();let dirty=false;
+  const cancellations=[],changes=[],productEvents=[],productsSeen=new Map(),seen=new Set(),legacy=new Map(),totals=new Map();let dirty=false;
   const day=new Date(Date.now()-5*3600000).toISOString().slice(0,10);
   const openings=new Map(),aliases=new Map(),original=new Map();
   for(const e of events){
@@ -195,13 +195,20 @@ export function reconcileWorkbook(bytes,events,linked,productLinks=new Map()){
       setCell(header,letter,label);sheetDirty=true;
     }
     if(sheetDirty){const ref='A3:K'+end;table.setAttribute('ref',ref);first(table,'autoFilter')?.setAttribute('ref',ref)}
-    const empty=[];let dateStyle,lastRow=end;
+    const empty=[],blankIds=new Set();let dateStyle,lastRow=end;
+    const untagged=[];
+
     for(const row of rows){
       const n=+row.getAttribute('r');if(n<=3||n>end)continue;
       const v=cellValues(row,strings);
       if(!v.F||+v.F===0){
         if(v.G&&voided.has(v.G))continue;
-        check(!v.G,'Una fila vinculada fue vaciada: '+name+' '+n);
+        if(v.G){
+          const cleared=!v.F&&!v.A&&!v.B&&!(kind==='entrada'?v.D:v.C);
+          check(cleared&&linked.has(v.G)&&byId.get(v.G)?.type===kind&&!seen.has(v.G)&&!blankIds.has(v.G),'Revisa la fila incompleta en '+name+' '+n);
+          blankIds.add(v.G);
+          continue;
+        }
         if(!v.A&&!v.B&&!(kind==='entrada'?v.D:v.C))empty.push(row);
         continue;
       }
@@ -210,7 +217,7 @@ export function reconcileWorkbook(bytes,events,linked,productLinks=new Map()){
       check(product&&movement.date&&Number.isFinite(movement.q)&&movement.q>0,'Revisa '+name+' fila '+n);
       dateStyle??=nodes(row,'c').find(c=>c.getAttribute('r')==='B'+n)?.getAttribute('s');
       let id=v.G;
-      if(!id){const candidates=legacy.get(signature(movement));id=candidates?.pop()||crypto.randomUUID();setCell(row,'G',id);sheetDirty=true}
+      if(!id){untagged.push(movement);const candidates=legacy.get(signature(movement));id=candidates?.pop()||crypto.randomUUID();setCell(row,'G',id);sheetDirty=true}
       check(uuid(id)&&!seen.has(id),'IdMovimiento repetido o inválido en '+name);
       const record=byId.get(id);
       if(record){
@@ -223,6 +230,7 @@ export function reconcileWorkbook(bytes,events,linked,productLinks=new Map()){
         check(byId.get(id)?.type===kind&&byId.has(id)&&signature(movement)===signature(fields(byId.get(id))),'Salida anulada con cambios en BASE');
         setCell(row,'F',0,{numeric:true});sheetDirty=true;continue;
       }
+      check(!blankIds.has(id),'IdMovimiento repetido en '+name);
       const current=catalog.get(product.pid);
       for(const [col,value,formula] of [['C',current.code,kind==='entrada'],['D',current.name,kind==='salida'],['E',current.unit,true]]){
         if(v[col]!==value){setCell(row,col,value,{formula});sheetDirty=true}
@@ -236,7 +244,13 @@ export function reconcileWorkbook(bytes,events,linked,productLinks=new Map()){
     }
     for(const [id,e] of byId){
       if(voided.has(id)||e.type!==kind||seen.has(id))continue;
-      check(!linked.has(id)&&(e.data.actor!=='Historial BASE'||e.data.replaces),'Falta una fila histórica o vinculada en '+name);
+      if(linked.has(id)){
+        check(headers.length>=7&&linked.get(id)===signature(fields(e)),'No se pudo confirmar el borrado en '+name+'. Revisa IdMovimiento y los cambios simultáneos.');
+        check(!untagged.length,'Hay filas sin identificador y movimientos ausentes en '+name+'. Revisa las filas antes de sincronizar.');
+        cancellations.push({id:crypto.randomUUID(),type:'anular',date:day,data:{pid:e.data.pid,target:id},targetType:kind});
+        continue;
+      }
+      check(e.data.actor!=='Historial BASE'||e.data.replaces,'Falta una fila histórica en '+name);
       let row=empty.shift();const product=catalog.get(e.data.pid);check(product,'Revisa catálogo de '+name);
       if(!row){
         check(+rows.at(-1).getAttribute('r')===end,'Hay contenido debajo de '+name);
@@ -270,6 +284,6 @@ export function reconcileWorkbook(bytes,events,linked,productLinks=new Map()){
   if(stockDirty){save('xl/worksheets/sheet1.xml',stock);save('xl/tables/table1.xml',stockTable);dirty=true}
   const operations=syncOperations({parts,read,save,strings,events,catalog,byCode,voided});dirty||=operations.dirty;
   if(dirty){const book=read('xl/workbook.xml');first(book,'calcPr')?.setAttribute('fullCalcOnLoad','1');save('xl/workbook.xml',book)}
-  return {bytes:dirty?zipSync(parts,{level:3}):null,changes,seen,productEvents,productsSeen,operations:operations.edits};
+  return {bytes:dirty?zipSync(parts,{level:3}):null,cancellations,changes,seen,productEvents,productsSeen,operations:operations.edits};
 }
 export const movementSignature=e=>signature(fields(e));
