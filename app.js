@@ -124,6 +124,14 @@ function checkWorkbook(force=false){
   const status=$('#onedrive-status');status.textContent='Comprobando BASE.xlsm…';
   workbookCheck=(async()=>{
     const result=await teamCall('/onedrive/session',{token:await token()});
+    const review=result.review;
+    $('#deletion-review').hidden=!review;
+    $('#confirm-deletions').dataset.token=review?.token||'';
+    $('#deletion-list').replaceChildren(...(review?.rows||[]).map(row=>{
+      const li=document.createElement('li');
+      li.textContent=[row.type==='salida'?'Salida':'Entrada',row.date,row.product,fmt(row.q)+' '+row.unit,row.ref].filter(Boolean).join(' · ');
+      return li;
+    }));
     status.textContent=(result.message||'Pendiente de comprobar')+(result.paused?'':result.cloud?' · Automática en la nube.':' · Solo con esta sesión abierta. Para continuar al cerrar la app, pulsa Autorizar OneDrive para la nube.');$('#pause-workbook').dataset.paused=String(!!result.paused);$('#pause-workbook').textContent=result.paused?'Reanudar sincronización':'Pausar sincronización';
   })().catch(err=>{status.textContent=err.message}).finally(()=>{workbookCheck=null});
   return workbookCheck;
@@ -133,6 +141,16 @@ function setupTeam(){
   $('#expiry-new').onchange=async e=>{const enabled=e.target.checked;try{await teamCall('/retention',{enabled})}catch(err){e.target.checked=!enabled;fail(err)}};
   $('#pause-workbook').onclick=async e=>{try{const paused=e.target.dataset.paused!=='true';await teamCall('/onedrive/pause',{paused});await checkWorkbook(true)}catch(err){fail(err)}};
 
+  $('#confirm-deletions').onclick=async event=>{
+    const button=event.currentTarget;
+    button.disabled=true;
+    try{
+      await teamCall('/onedrive/approve-deletions',{token:button.dataset.token});
+      if(workbookCheck)await workbookCheck;
+      await checkWorkbook(true);
+      await pullTeam();
+    }catch(error){fail(error)}finally{button.disabled=false}
+  };
   $('#workbook-check').onclick=()=>checkWorkbook(true);
   $('#onedrive-connect').onclick=async()=>{try{
     const result=await teamCall('/onedrive/start');

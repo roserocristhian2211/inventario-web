@@ -114,3 +114,22 @@ test('BASE en OneDrive personal confirma el mismo archivo y respeta cambios conc
   latest='v1';status=409;await assert.rejects(save(),/409 al guardar BASE .resourceLocked/);
   status=412;await assert.rejects(save(),/412/);
 });
+
+test('solo el administrador confirma la lista vigente de bajas de Excel',async()=>{
+  const {Bodega}=await import('./worker.mjs');
+  let review={token:randomUUID(),approved:false};
+  const storage={
+    get:async key=>key==='excel-deletion-review'?review:null,
+    put:async(key,value)=>{assert.equal(key,'excel-deletion-review');review=value},
+    transaction:fn=>fn(storage)
+  };
+  const b=Object.assign(Object.create(Bodega.prototype),{ctx:{storage},env:{ADMIN_SUB:'admin'}});
+  const call=(subject,token)=>b.fetch(new Request('https://internal/onedrive/approve-deletions',{
+    method:'POST',body:JSON.stringify({subject,body:{token}})
+  }));
+  assert.equal((await call('operador',review.token)).status,403);
+  assert.equal((await call('admin','lista-anterior')).status,409);
+  assert.equal(review.approved,false);
+  assert.equal((await call('admin',review.token)).status,200);
+  assert.equal(review.approved,true);
+});

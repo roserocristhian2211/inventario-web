@@ -85,7 +85,19 @@ export class Bodega {
         requireValue(typeof body.token==='string'&&body.token.length>20,'Vuelve a iniciar sesión con Microsoft.');
         if(await this.ctx.storage.get('excel-paused'))return reply({message:'Sincronización de Excel en pausa.',paused:true});
         const cloud=!!await this.ctx.storage.get('onedrive-connection');
-        return reply({message:await this.synchronize(cloud?undefined:body.token),paused:false,cloud});
+        const message=await this.synchronize(cloud?undefined:body.token);
+        const review=await this.ctx.storage.get('excel-deletion-review');
+        return reply({message,paused:false,cloud,review:review&&!review.approved?{token:review.token,rows:review.rows}:null});
+      }
+      if(path==='/onedrive/approve-deletions'){
+        requireValue(subject===this.env.ADMIN_SUB,'Acceso exclusivo del administrador.',403);
+        await this.ctx.storage.transaction(async tx=>{
+          const review=await tx.get('excel-deletion-review');
+          requireValue(review&&review.token===body.token,'La lista cambió. Vuelve a revisar BASE.',409);
+          await tx.put('excel-deletion-review',{...review,approved:true});
+        });
+        await this.wakeWorkbook();
+        return reply({approved:true});
       }
       if(path==='/onedrive/status'){
         requireValue(subject===this.env.ADMIN_SUB,'Acceso exclusivo del administrador.',403);
