@@ -87,7 +87,12 @@ export class Bodega {
         const cloud=!!await this.ctx.storage.get('onedrive-connection');
         const message=await this.synchronize(cloud?undefined:body.token);
         const review=await this.ctx.storage.get('excel-deletion-review');
-        return reply({message,paused:false,cloud,review:review&&!review.approved?{token:review.token,rows:review.rows}:null});
+        const latest=this.db.first("SELECT name FROM sqlite_master WHERE type='table' AND name='workbook_links'")&&this.db.first(`
+          SELECT e.payload FROM events e JOIN workbook_links w ON w.id=e.id
+          WHERE json_extract(e.payload,'$.type')='entrada' AND e.id NOT IN
+            (SELECT json_extract(payload,'$.data.target') FROM events WHERE json_extract(payload,'$.type')='anular')
+          ORDER BY e.seq DESC LIMIT 1`);
+        return reply({message,paused:false,cloud,latestReceipt:latest?JSON.parse(latest.payload):null,review:review&&!review.approved?{token:review.token,rows:review.rows}:null});
       }
       if(path==='/onedrive/approve-deletions'){
         requireValue(subject===this.env.ADMIN_SUB,'Acceso exclusivo del administrador.',403);

@@ -196,7 +196,7 @@ export function reconcileWorkbook(bytes,events,linked,productLinks=new Map()){
     }
     if(sheetDirty){const ref='A3:K'+end;table.setAttribute('ref',ref);first(table,'autoFilter')?.setAttribute('ref',ref)}
     const empty=[],blankIds=new Set();let dateStyle,lastRow=end;
-    const untagged=[];
+    const untagged=new Set();
 
     for(const row of rows){
       const n=+row.getAttribute('r');if(n<=3||n>end)continue;
@@ -217,7 +217,7 @@ export function reconcileWorkbook(bytes,events,linked,productLinks=new Map()){
       check(product&&movement.date&&Number.isFinite(movement.q)&&movement.q>0,'Revisa '+name+' fila '+n);
       dateStyle??=nodes(row,'c').find(c=>c.getAttribute('r')==='B'+n)?.getAttribute('s');
       let id=v.G;
-      if(!id){untagged.push(movement);const candidates=legacy.get(signature(movement));id=candidates?.pop()||crypto.randomUUID();setCell(row,'G',id);sheetDirty=true}
+      if(!id){untagged.add(signature(movement));const candidates=legacy.get(signature(movement));id=candidates?.pop()||crypto.randomUUID();setCell(row,'G',id);sheetDirty=true}
       check(uuid(id)&&!seen.has(id),'IdMovimiento repetido o inválido en '+name);
       const record=byId.get(id);
       if(record){
@@ -246,7 +246,7 @@ export function reconcileWorkbook(bytes,events,linked,productLinks=new Map()){
       if(voided.has(id)||e.type!==kind||seen.has(id))continue;
       if(linked.has(id)){
         check(headers.length>=7&&linked.get(id)===signature(fields(e)),'No se pudo confirmar el borrado en '+name+'. Revisa IdMovimiento y los cambios simultáneos.');
-        check(!untagged.length,'Hay filas sin identificador y movimientos ausentes en '+name+'. Revisa las filas antes de sincronizar.');
+        check(!untagged.has(linked.get(id)),'Hay una fila idéntica sin IdMovimiento en '+name+'. Revisa su identificador.');
         cancellations.push({id:crypto.randomUUID(),type:'anular',date:day,data:{pid:e.data.pid,target:id},targetType:kind});
         continue;
       }

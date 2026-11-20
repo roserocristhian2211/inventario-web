@@ -66,7 +66,7 @@ export async function syncCloud(ctx,env,db,sessionToken,accessCache={}){
     if(!bound)await store.put('onedrive-owner-file',{drive,item});
     const itemUrl='https://graph.microsoft.com/v1.0/drives/'+encodeURIComponent(drive)+'/items/'+encodeURIComponent(item);
     const last=await store.get('onedrive-checkpoint');
-    if(last?.version===2&&last.drive===drive&&last.item===item&&last.tag===file.eTag&&last.seq===seq){await store.delete('excel-deletion-review');await store.put('onedrive-status','Al día');return 'Al día'}
+    if(!await store.get('excel-deletion-review')&&last?.version===3&&last.drive===drive&&last.item===item&&last.tag===file.eTag&&last.seq===seq){await store.delete('excel-deletion-review');await store.put('onedrive-status','Al día');return 'Al día'}
     const download=await fetch(file['@microsoft.graph.downloadUrl']);await assertGraph(download,'leer BASE');
     const events=[...db.sql.exec('SELECT payload FROM events ORDER BY seq')].map(r=>JSON.parse(r.payload));
     db.sql.exec('CREATE TABLE IF NOT EXISTS workbook_links(id TEXT PRIMARY KEY,signature TEXT NOT NULL)');
@@ -74,6 +74,7 @@ export async function syncCloud(ctx,env,db,sessionToken,accessCache={}){
     db.sql.exec('CREATE TABLE IF NOT EXISTS workbook_products(id TEXT PRIMARY KEY,baseline TEXT NOT NULL)');
     const productLinks=new Map([...db.sql.exec('SELECT id,baseline FROM workbook_products')].map(r=>[r.id,JSON.parse(r.baseline)]));
     const result=reconcileWorkbook(new Uint8Array(await download.arrayBuffer()),events,linked,productLinks);
+    let pendingReview=null;
     if(result.cancellations.length){
       requireValue(last?.drive===drive&&last.item===item,'Verifica el libro vinculado antes de importar eliminaciones.',409);
       const owner=await fetch('https://graph.microsoft.com/v1.0/me/drive?$select=id,owner',{headers});
@@ -82,7 +83,8 @@ export async function syncCloud(ctx,env,db,sessionToken,accessCache={}){
       const ownerId=account.owner?.user?.id;
       const editorId=file.lastModifiedBy?.user?.id;
       const ownerEdited=account.id.toLowerCase()===drive.toLowerCase()&&ownerId&&editorId&&ownerId.toLowerCase()===editorId.toLowerCase();
-      if(!ownerEdited){
+      const review=await store.get('excel-deletion-review');
+      if(!ownerEdited||review){
         const indexed=new Map(events.map(e=>[e.id,e]));
         const products=new Map(events.filter(e=>e.type==='create'||e.type==='edit').map(e=>[e.data.pid,e.data]));
         const rows=result.cancellations.map(({data:{target}})=>{
@@ -90,13 +92,13 @@ export async function syncCloud(ctx,env,db,sessionToken,accessCache={}){
           return {id:target,type:e.type,date:e.date,product:p.name,q:e.data.q,unit:p.unit,ref:e.data.doc||e.data.dest||''};
         }).sort((a,b)=>a.id.localeCompare(b.id));
         const key=JSON.stringify([drive,item,file.eTag,rows]);
-        const review=await store.get('excel-deletion-review');
-        if(review?.key!==key){
-          await store.put('excel-deletion-review',{key,rows,token:crypto.randomUUID(),approved:false});
+        if(review?.key!==key||!review.approved){
+          pendingReview=review?.key===key?review:{key,rows,token:crypto.randomUUID(),approved:false};
+          await store.put('excel-deletion-review',pendingReview);
         }
-        requireValue(review?.key===key&&review.approved,'Microsoft no identificó al editor de las filas borradas. Revisa y confirma los movimientos pendientes.',409);
       }
     }else await store.delete('excel-deletion-review');
+    const cancellations=pendingReview?[]:result.cancellations;
     const admin={subject:env.ADMIN_SUB,email:env.ADMIN_EMAIL,role:'admin'};
     function apply(){
       requireValue((db.first('SELECT MAX(seq) n FROM events').n||0)===seq,'La bodega cambió durante la lectura. Reintentando.',409);
@@ -106,9 +108,9 @@ export async function syncCloud(ctx,env,db,sessionToken,accessCache={}){
         db.append(event,admin);
       }
       // Restore dispatched units before reversing receipts in the same Excel edit.
-      for(const event of result.cancellations.filter(e=>e.targetType==='salida'))db.append(event,admin);
+      for(const event of cancellations.filter(e=>e.targetType==='salida'))db.append(event,admin);
       for(const change of result.changes)byId.set(change.id,applyChange(db,change,admin));
-      for(const event of result.cancellations.filter(e=>e.targetType==='entrada'))db.append(event,admin);
+      for(const event of cancellations.filter(e=>e.targetType==='entrada'))db.append(event,admin);
       for(const op of result.operations){
         const before=byId.get(op.id);
         if(!before){db.append(op,admin);continue}
@@ -140,7 +142,12 @@ export async function syncCloud(ctx,env,db,sessionToken,accessCache={}){
       }
       return db.first('SELECT MAX(seq) n FROM events').n||0;
     });
-    await store.put('onedrive-checkpoint',{version:2,drive,item,tag,seq:committed});
+    await store.put('onedrive-checkpoint',{version:3,drive,item,tag,seq:committed});
+    if(pendingReview){
+      const message='Ingresos sincronizados. Quedan '+pendingReview.rows.length+' bajas por confirmar.';
+      await store.put('onedrive-status',message);
+      return message;
+    }
     await store.delete('excel-deletion-review');
     const message='Sincronizado · '+new Date().toISOString();await store.put('onedrive-status',message);return message;
   }catch(err){if(err.status===401)accessCache.expires=0;const message=err.message?.slice(0,180)||'Error de sincronización';await store.put('onedrive-status',message);return message}

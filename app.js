@@ -124,6 +124,24 @@ function checkWorkbook(force=false){
   const status=$('#onedrive-status');status.textContent='Comprobando BASE.xlsm…';
   workbookCheck=(async()=>{
     const result=await teamCall('/onedrive/session',{token:await token()});
+    await pullTeam();
+    const receipt=result.latestReceipt,link=$('#latest-receipt');
+    if(receipt&&!await one('events',receipt.id)){
+      await put('events',receipt);
+      await reload();
+    }
+    const move=receipt&&moves.find(m=>m.id===receipt.id);
+    link.hidden=!move;
+    if(move){
+      link.textContent='Ver última entrada sincronizada · '+move.prod+' · '+fmt(move.q)+' '+move.unit+(move.data.doc?' · Guía '+move.data.doc:'');
+      link.onclick=()=>{
+        $('#find-move').value=move.code;
+        $('#moves-from').value=$('#moves-to').value=move.date;
+        $('#filter-type').value='entrada';
+        $('#filter-type').dispatchEvent(new Event('input'));
+        show('movimientos');
+      };
+    }
     const review=result.review;
     $('#deletion-review').hidden=!review;
     $('#confirm-deletions').dataset.token=review?.token||'';
@@ -509,6 +527,7 @@ async function openAccount(){
     $('#folder').closest('label').hidden=true;
     $('#p-onedrive h2').textContent='Bodega compartida';
     $('#access').hidden=true;$('#workspace').hidden=false;
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden&&navigator.onLine)scheduleSync()});
     setInterval(()=>{if(!document.hidden&&navigator.onLine)scheduleSync()},30000);
     return
   }

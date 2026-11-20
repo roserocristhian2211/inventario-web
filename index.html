@@ -58,6 +58,7 @@
 <button type="button" class="btn outline" id="workbook-check">Comprobar Excel ahora</button>
 <button type="button" id="pause-workbook" class="btn outline">Pausar sincronización</button>
 <p id="onedrive-status" role="status"></p>
+<button id="latest-receipt" type="button" class="btn outline" hidden></button>
 <section id="deletion-review" hidden><h3>Movimientos borrados en BASE</h3><ul id="deletion-list"></ul><button type="button" class="btn" id="confirm-deletions">Confirmar bajas en la app</button></section>
 </section>
 <section id="settings-archivos" class="settings-pane panel formpanel" aria-labelledby="heading-archivos" hidden>
@@ -82,7 +83,7 @@
 </section>
 </main></div></div>
 <dialog id="direct-dialog"></dialog><dialog id="report-dialog"></dialog><dialog id="evidence"><button type="button" class="back-link" data-back><span aria-hidden="true">←</span> Volver</button><button class="btn outline" type="button" id="evidence-share">Compartir foto</button><form method="dialog"><button>Cerrar</button></form><img id="evidence-img" alt="Foto del documento de entrada" style="max-width:100%"></dialog><dialog id="modal"><form id="editor" method="dialog"><button type="button" class="back-link" data-back><span aria-hidden="true">←</span> Volver</button><div class="modalhead"><h3 id="modal-title">Nuevo</h3><button type="button" id="close" class="ghost" aria-label="Cerrar">✕</button></div><div id="fields"></div><div class="actions end"><button type="button" class="btn outline" id="cancel">Cancelar</button><button type="submit" class="btn">Guardar</button></div></form></dialog>
-<div id="toast" role="status" aria-live="polite"></div><script type="module" src="./app.js?v=24"></script>
+<div id="toast" role="status" aria-live="polite"></div><script type="module" src="./app.js?v=25"></script>
 <dialog id="settings-drawer" aria-labelledby="settings-title"><header><h2 id="settings-title">Configuración</h2><button id="settings-close" type="button" aria-label="Cerrar menú">×</button></header><nav aria-label="Secciones de configuración">
 <button type="button" data-module="cuenta" aria-controls="settings-cuenta"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21a8 8 0 0 0-16 0 M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0"/></svg><span>Mi cuenta</span></button>
 <button type="button" data-module="preferencias" aria-controls="settings-preferencias"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h7m5 0h6M3 18h12m4 0h2 M10 3v6m5 6v6"/></svg><span>Apariencia y avisos</span></button>
