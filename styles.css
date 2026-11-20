@@ -236,3 +236,56 @@ dialog .back-link {margin: 4px 0 8px}
 .ledger-record small {display:block;color:var(--ledger-muted);margin-top:4px}.ledger-qty {text-align:right;flex:none}.ledger-qty b {font-size:1.25rem}.received {color:#38c8bb}.issued {color:#ff945d}.light .received {color:#00756c}.light .issued {color:#a44411}
 .ledger-history {margin:18px 0;color:var(--ledger-muted)}.ledger-history summary {cursor:pointer}.ledger-history select {margin:8px;padding:6px}
 @media(max-width:500px){.ledger-actions {margin:0;flex-basis:100%}.ledger-actions button {flex:1}.ledger-head {gap:8px}}
+
+/* Compact dashboard tiles and illustrated operation covers. */
+:root {--bg:#121212;--surface:#242424;--line:#393939;--fg:#fafafa;--muted:#bcbcbc;--accent:#36df75}
+:root.light {--bg:#f6f6f2;--surface:#fff;--line:#d5d6ce;--fg:#181a18;--muted:#555a55;--accent:#126432}
+#appname {color:var(--fg);letter-spacing:.09em}
+#settings-toggle {background:#eab198;color:#28231e;border:0}
+.home-title {align-items:flex-end;margin:22px 0 16px}
+.home-title h1 {font-weight:820}
+.sync-pill {background:var(--surface);font-size:.78rem}
+#p-inicio .stats {grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+#p-inicio .stat {
+  display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;gap:0 12px;
+  align-content:center;text-align:left;padding:0 8px 0 0;overflow:hidden;
+  background:var(--surface);color:var(--fg);border-radius:7px;min-height:60px
+}
+#p-inicio .stat i {grid-row:span 2;height:100%;min-height:60px;width:62px;border-radius:0;color:#16211b;
+  background:repeating-linear-gradient(135deg,transparent 0 9px,#ffffff40 10px 12px),var(--cover)}
+.stat.teal {--cover:#9ae2ac}.stat.red {--cover:#ffac98}.stat.amber {--cover:#f0d471}.stat.blue {--cover:#abaff8}
+#p-inicio .stat strong {font-size:1.35rem;line-height:1;margin:8px 0 1px}
+#p-inicio .stat span {font-size:.83rem;font-weight:650;line-height:1.2;color:var(--fg);margin-bottom:8px}
+.work-title {font-size:clamp(1.35rem,3vw,1.8rem);letter-spacing:-.035em;margin:26px 0 12px}
+.work-covers {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:30px}
+.work-covers .quick {display:contents}
+.work-covers button:is([data-kind],.report) {
+  position:relative;isolation:isolate;overflow:hidden;display:flex;flex-direction:column;
+  align-items:flex-start;justify-content:space-between;gap:24px;width:100%;min-height:144px;
+  padding:16px;margin:0;border:0;border-radius:9px;text-align:left;color:#161916;background:var(--cover);
+}
+.work-covers [data-kind=entrada] {--cover:#a4e9a9}
+.work-covers [data-kind=salida] {--cover:#ffae89}
+.work-covers .report {--cover:#ceaafa}
+.work-covers button::after {content:'';position:absolute;z-index:-1;width:68%;aspect-ratio:1;right:-8%;top:-30%;border-radius:50%;
+  background:repeating-radial-gradient(circle, transparent 0 9px,#18251d 10px 13px)}
+.work-covers [data-kind=salida]::after {border-radius:0;transform:rotate(-30deg);background:repeating-linear-gradient(90deg,transparent 0 13px,#4b251d 14px 20px)}
+.work-covers .report::after {border-radius:0;top:-22%;transform:rotate(22deg);background:repeating-conic-gradient(#403052 0 25%,transparent 0 50%) 0 0/26px 26px}
+.work-covers button i {width:38px;height:38px;display:grid;place-items:center;color:inherit;background:#ffffff8c;border-radius:50%}
+.work-covers button b,.work-covers button small {text-shadow:none;color:inherit}
+.work-covers button b {letter-spacing:-.045em;font-size:1.55rem;line-height:1.1}
+.work-covers button small {margin-top:4px;font-size:.83rem}
+#p-inicio .stat:hover,.work-covers button:hover {filter:brightness(1.07)}
+.dock {background:var(--bg);border-color:var(--line)}
+.dock-add,.btn:not(.outline),.ledger-tabs button[aria-pressed=true] {background:#32dc70;border-color:transparent;color:#102416}
+.btn:not(.outline),.ledger-actions button,.ledger-tabs button {border-radius:999px}
+.ledger-head {background:var(--surface);color:var(--fg);border-bottom-color:var(--accent)}
+.ledger-head p {color:var(--muted)}
+.ledger-actions button {background:var(--bg);color:var(--fg);border-color:var(--line)}
+.ledger-actions button[aria-expanded=true] {border-color:var(--accent)}
+@media(max-width:600px){
+  .work-covers {display:flex;overflow-x:auto;scroll-snap-type:x proximity;padding:3px 2px 9px;gap:10px}
+  .work-covers button:is([data-kind],.report) {flex:0 0 43%;min-height:142px;scroll-snap-align:start}
+  #p-inicio .stat {column-gap:8px}
+  #p-inicio .stat i {width:44px}
+}

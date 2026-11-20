@@ -466,11 +466,20 @@ function setup(){
   setupSettingsMenu();
   setupLedger();
   $('#more-moves').onclick=()=>{moveLimit+=80;render()};
-  for(const [id,filter] of [['#n-products','all'],['#n-out','out'],['#n-low','low'],['#n-today','today']]){
-    const card=$(id).closest('article');card.tabIndex=0;card.setAttribute('role','button');
-    const go=()=>{if(filter==='today'){$('#moves-from').value=$('#moves-to').value=today();$('#find-move').value='';$('#filter-type').value='todos';$('#filter-type').dispatchEvent(new Event('input'));show('movimientos')}else{$('#find-product').value='';$('#stock-filter').value=filter;show('productos')}};
-    card.onclick=go;card.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}};
-  }
+  $$('[data-summary]').forEach(button=>button.onclick=()=>{
+    const filter=button.dataset.summary;
+    if(filter==='today'){
+      $('#moves-from').value=$('#moves-to').value=today();
+      $('#filter-type').value='todos';
+      $('#find-move').value='';
+      $('#filter-type').dispatchEvent(new Event('input'));
+      show('movimientos');
+      return;
+    }
+    $('#stock-filter').value=filter;
+    $('#find-product').value='';
+    show('productos');
+  });
   $('#view-attention').onclick=()=>{$('#stock-filter').value='alert';$('#find-product').value='';show('productos')};
   $('#stock-filter').onchange=render;
   refreshCounts=installDirect({$,today,admin:canManage,products:()=>inventory,events:()=>events,moves:()=>moves,record,reload,toast,fail,openMove:(pid,type)=>openEditor('movimiento',pid,type),installImport,planInventoryImport,saveGuide:async batch=>{if(TEAM_API){const {events:saved}=await teamCall('/guide-replace',{events:batch});await store('events','readwrite',table=>Promise.all(saved.map(e=>req(table.put(e)))))}else await persistBatch(batch);await reload();scheduleSync()},uploadBook:async blob=>{const folder=await childFolder((await j('/me/drive/root?$select=id')).id,'Respaldos Inventario Web');await up(folder.id,'Inventario-directo-'+new Date().toISOString().replace(/[:.]/g,'-')+'.xlsx',blob,blob.type)},save:async batch=>{await persistBatch(batch);await reload();scheduleSync()}});
@@ -554,10 +563,10 @@ async function main(){
   function setTheme(light){
     document.documentElement.classList.toggle('light',light);
     $('#theme-toggle').setAttribute('aria-label',light?'Activar tema oscuro':'Activar tema claro');
-    document.querySelector('meta[name="theme-color"]').content=light?'#eff5f2':'#0b1514';
+    document.querySelector('meta[name="theme-color"]').content=light?'#f6f6f2':'#121212';
   }
   const scheme=window.matchMedia?.('(prefers-color-scheme: light)');
-  const applyTheme=()=>{const mode=localStorage.getItem('iw-theme')||'auto';$('#theme-mode').value=mode;setTheme(mode==='light'||(mode==='auto'&&scheme?.matches))};
+  const applyTheme=()=>{const mode=localStorage.getItem('iw-theme')||'dark';$('#theme-mode').value=mode;setTheme(mode==='light'||(mode==='auto'&&scheme?.matches))};
   $('#theme-mode').onchange=e=>{localStorage.setItem('iw-theme',e.target.value);applyTheme()};scheme?.addEventListener('change',applyTheme);applyTheme();
   $('#theme-toggle').onclick=()=>{const light=!document.documentElement.classList.contains('light');localStorage.setItem('iw-theme',light?'light':'dark');applyTheme()};
 
