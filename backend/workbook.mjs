@@ -197,12 +197,28 @@ export function reconcileWorkbook(bytes,events,linked,productLinks=new Map()){
     if(sheetDirty){const ref='A3:K'+end;table.setAttribute('ref',ref);first(table,'autoFilter')?.setAttribute('ref',ref)}
     const empty=[],blankIds=new Set();let dateStyle,lastRow=end;
     const untagged=new Set();
+    function clearMovement(row){
+      // Keep the blank table template, including its shared lookup formulas and styles.
+      for(const cell of nodes(row,'c')){
+        if(!/^[A-K]\d+$/.test(cell.getAttribute('r')))continue;
+        const formula=first(cell,'f');
+        for(const child of Array.from(cell.childNodes)){
+          if(child!==formula&&['v','is'].includes(child.localName))cell.removeChild(child);
+        }
+        if(formula)cell.setAttribute('t','str');else cell.removeAttribute('t');
+      }
+      empty.push(row);
+      sheetDirty=true;
+    }
 
     for(const row of rows){
       const n=+row.getAttribute('r');if(n<=3||n>end)continue;
       const v=cellValues(row,strings);
       if(!v.F||+v.F===0){
-        if(v.G&&voided.has(v.G))continue;
+        if(v.G&&voided.has(v.G)){
+          check(byId.get(v.G)?.type===kind,'Identificador anulado en una hoja incorrecta');
+          clearMovement(row);continue;
+        }
         if(v.G){
           const cleared=!v.F&&!v.A&&!v.B&&!(kind==='entrada'?v.D:v.C);
           check(cleared&&linked.has(v.G)&&byId.get(v.G)?.type===kind&&!seen.has(v.G)&&!blankIds.has(v.G),'Revisa la fila incompleta en '+name+' '+n);
@@ -228,7 +244,7 @@ export function reconcileWorkbook(bytes,events,linked,productLinks=new Map()){
       }
       if(voided.has(id)){
         check(byId.get(id)?.type===kind&&byId.has(id)&&signature(movement)===signature(fields(byId.get(id))),'Salida anulada con cambios en BASE');
-        setCell(row,'F',0,{numeric:true});sheetDirty=true;continue;
+        clearMovement(row);continue;
       }
       check(!blankIds.has(id),'IdMovimiento repetido en '+name);
       const current=catalog.get(product.pid);

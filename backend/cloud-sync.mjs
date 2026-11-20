@@ -66,7 +66,7 @@ export async function syncCloud(ctx,env,db,sessionToken,accessCache={}){
     if(!bound)await store.put('onedrive-owner-file',{drive,item});
     const itemUrl='https://graph.microsoft.com/v1.0/drives/'+encodeURIComponent(drive)+'/items/'+encodeURIComponent(item);
     const last=await store.get('onedrive-checkpoint');
-    if(!await store.get('excel-deletion-review')&&last?.version===3&&last.drive===drive&&last.item===item&&last.tag===file.eTag&&last.seq===seq){await store.delete('excel-deletion-review');await store.put('onedrive-status','Al día');return 'Al día'}
+    if(!await store.get('excel-deletion-review')&&last?.version===4&&last.drive===drive&&last.item===item&&last.tag===file.eTag&&last.seq===seq){await store.delete('excel-deletion-review');await store.put('onedrive-status','Al día');return 'Al día'}
     const download=await fetch(file['@microsoft.graph.downloadUrl']);await assertGraph(download,'leer BASE');
     const events=[...db.sql.exec('SELECT payload FROM events ORDER BY seq')].map(r=>JSON.parse(r.payload));
     db.sql.exec('CREATE TABLE IF NOT EXISTS workbook_links(id TEXT PRIMARY KEY,signature TEXT NOT NULL)');
@@ -142,7 +142,7 @@ export async function syncCloud(ctx,env,db,sessionToken,accessCache={}){
       }
       return db.first('SELECT MAX(seq) n FROM events').n||0;
     });
-    await store.put('onedrive-checkpoint',{version:3,drive,item,tag,seq:committed});
+    await store.put('onedrive-checkpoint',{version:4,drive,item,tag,seq:committed});
     if(pendingReview){
       const message='Ingresos sincronizados. Quedan '+pendingReview.rows.length+' bajas por confirmar.';
       await store.put('onedrive-status',message);
