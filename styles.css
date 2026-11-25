@@ -264,8 +264,9 @@ dialog .back-link {margin: 4px 0 8px}
   align-items:flex-start;justify-content:space-between;gap:24px;width:100%;min-height:144px;
   padding:16px;margin:0;border:0;border-radius:9px;text-align:left;color:#161916;background:var(--cover);
 }
-.work-covers [data-kind=entrada] {--cover:#a4e9a9}
-.work-covers [data-kind=salida] {--cover:#ffae89}
+:root {--entry-color:#a4e9a9;--exit-color:#ffae89;--movement-ink:#182019}
+.work-covers [data-kind=entrada] {--cover:var(--entry-color)}
+.work-covers [data-kind=salida] {--cover:var(--exit-color)}
 .work-covers .report {--cover:#ceaafa}
 .work-covers button::after {content:'';position:absolute;z-index:-1;width:68%;aspect-ratio:1;right:-8%;top:-30%;border-radius:50%;
   background:repeating-radial-gradient(circle, transparent 0 9px,#18251d 10px 13px)}
@@ -289,3 +290,37 @@ dialog .back-link {margin: 4px 0 8px}
   #p-inicio .stat {column-gap:8px}
   #p-inicio .stat i {width:44px}
 }
+
+/* The same two swatches identify each movement throughout the app. */
+#editor:has(#movement-fields[data-kind=entrada]),
+[data-ledger-type=entrada], #product-in, [data-movement=entrada],
+.received, .move-amount, #direct-dialog:has(#guide-save),
+#direct-dialog:has(form [name=doc]), #direct-dialog:has(.movement-card) {
+  --movement-color:var(--entry-color)
+}
+#editor:has(#movement-fields[data-kind=salida]),
+[data-ledger-type=salida], #product-out, [data-movement=salida],
+.issued, .move-amount.dispatch, #direct-dialog:has(form [name=dest]),
+#direct-dialog:has(.movement-card .dispatch) {
+  --movement-color:var(--exit-color)
+}
+#editor:has(#movement-fields) {
+  --action:var(--movement-color);
+  --stock-band:color-mix(in srgb,var(--movement-color) 16%,var(--surface))
+}
+#editor:has(#movement-fields) .switchbar input:checked + span,
+#editor:has(#movement-fields) [type=submit],
+#movement-fields .ponds input:checked + span,
+.ledger-tabs button[aria-pressed=true],
+#direct-dialog :is(#product-in,#product-out,#edit-commit,#guide-save),
+#direct-dialog:has(.movement-card) :is(#movement-edit,#guide-edit),
+.item[data-movement] .tag {
+  background:var(--movement-color);border-color:var(--movement-color);color:var(--movement-ink)
+}
+#movement-fields :is(#add-line,.photo-picks label) {
+  border-color:color-mix(in srgb,var(--movement-color) 60%,var(--control-line))
+}
+.ledger-qty:is(.received,.issued) b, .movement-card .move-amount,
+.item[data-movement] .quantity strong {color:var(--movement-color)}
+.light .ledger-qty:is(.received,.issued) b, .light .movement-card .move-amount,
+.light .item[data-movement] .quantity strong {color:color-mix(in srgb,var(--movement-color) 42%,#191919)}
