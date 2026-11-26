@@ -324,3 +324,7 @@ dialog .back-link {margin: 4px 0 8px}
 .item[data-movement] .quantity strong {color:var(--movement-color)}
 .light .ledger-qty:is(.received,.issued) b, .light .movement-card .move-amount,
 .light .item[data-movement] .quantity strong {color:color-mix(in srgb,var(--movement-color) 42%,#191919)}
+.dispatch-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(72px,1fr));gap:8px}
+#movement-fields label:has([name=multi]) {display:flex;align-items:center;flex-direction:row;gap:8px}
+#movement-fields [name=multi] {width:18px;height:18px}
+#p-diario .report-scroll,#p-cobertura .report-scroll {overflow-x:auto}

@@ -6,7 +6,7 @@ const origin='https://roserocristhian2211.github.io';
 const tenant='9188040d-6c67-4c5b-b112-36a304b66dad';
 const issuer='https://login.microsoftonline.com/'+tenant+'/v2.0';
 const keys=createRemoteJWKSet(new URL('https://login.microsoftonline.com/consumers/discovery/v2.0/keys'));
-const cors={'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Headers':'authorization,content-type','Access-Control-Allow-Methods':'POST,OPTIONS','Cache-Control':'no-store'};
+const cors={'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Headers':'authorization,content-type','Access-Control-Allow-Methods':'POST,OPTIONS','Cache-Control':'no-store','X-Inventario-Version':'28'};
 const reply=(obj,status=200)=>Response.json(obj,{status,headers:cors});
 async function requestBody(req){
   const limit=1800000;
@@ -71,7 +71,7 @@ export class Bodega {
         });
         this.accessCache={};
         await this.ctx.storage.setAlarm(Date.now()+1000);
-        return new Response('Cuenta de OneDrive conectada. Puedes volver a Inventario Web.',{headers:{'Content-Type':'text/plain;charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
+        return new Response('Cuenta de OneDrive conectada. Puedes volver a Inventario Web.',{headers:{'Content-Type':'text/plain;charset=utf-8','Cache-Control':'no-store','X-Inventario-Version':'28','Referrer-Policy':'no-referrer'}});
       }
       const {subject,label,body}=await req.json(), path=new URL(req.url).pathname;
       if(path==='/onedrive/pause'){
@@ -130,9 +130,17 @@ export class Bodega {
           for(const {id} of expired){sql.exec('DELETE FROM photos WHERE id=?',id);sql.exec('DELETE FROM receipt_expiry WHERE id=?',id)}
           return {...user,cargo:db.first('SELECT cargo FROM staff WHERE email=?',user.email)?.cargo||''};
         }
+        if(path==='/movement-status'){
+          requireValue(uuid(body.id),'Movimiento inválido.');
+          const receipt=db.first('SELECT confirmed FROM excel_receipts WHERE id=?',body.id);
+          return {confirmed:receipt?.confirmed||null};
+        }
         if(path==='/changes'){
+          const pending=db.first(`SELECT COUNT(*) n, MIN(json_extract(payload,'$.ts')) since FROM events
+            WHERE seq>coalesce((SELECT CAST(value AS INTEGER) FROM config WHERE key='excel_seq'),0)
+            AND json_extract(payload,'$.type')='anular'`);
           const rows=[...sql.exec('SELECT seq,payload FROM events WHERE seq>? ORDER BY seq LIMIT 200',Number(body.after)||0)];
-          return {anchor:db.first("SELECT value FROM config WHERE key='anchor'")?.value,rows:rows.map(r=>({seq:r.seq,event:{entryOrder:r.seq,...JSON.parse(r.payload)}})),name:db.first("SELECT value FROM config WHERE key='name'")?.value};
+          return {pendingDeletions:pending,anchor:db.first("SELECT value FROM config WHERE key='anchor'")?.value,rows:rows.map(r=>({seq:r.seq,event:{entryOrder:r.seq,...JSON.parse(r.payload)}})),name:db.first("SELECT value FROM config WHERE key='name'")?.value};
         }
         if(path==='/photo'){return db.first('SELECT p.data,x.expires FROM photos p LEFT JOIN receipt_expiry x ON x.id=p.id WHERE p.id=? AND (x.expires IS NULL OR x.expires>?)',String(body.id),Date.now())||{}}
         if(path==='/event')return db.append(body,user);
@@ -147,7 +155,13 @@ export class Bodega {
         }
         if(path==='/batch'){
           requireValue(Array.isArray(body.events)&&body.events.length>0&&body.events.length<=100,'Lote inválido.');
-          return {events:body.events.map(e=>db.append(e,user))};
+          return {events:body.events.map(e=>{
+            if(body.checkDuplicates===true&&!body.allowDuplicates&&db.similarMovement(e)){
+              const product=db.first('SELECT code FROM products WHERE id=?',e.data.pid);
+              throw Object.assign(new Error('Posible duplicado: '+product.code+' · '+e.date+' · '+e.data.q+' · '+(e.data.doc||e.data.dest||'Sin documento')),{status:409,duplicate:true});
+            }
+            return db.append(e,user);
+          })};
         }
         if(path==='/attachment'){
           requireValue(uuid(body.id)&&typeof body.data==='string'&&/^data:image\/jpeg;base64,[a-zA-Z0-9+/=]+$/.test(body.data),'Fotografía inválida.');
@@ -172,8 +186,13 @@ export class Bodega {
         if(path==='/remove'){sql.exec('DELETE FROM invites WHERE email=?',address);sql.exec('DELETE FROM members WHERE email=?',address);return {}}
         throw Object.assign(new Error('Ruta inexistente.'),{status:404});
       });
+      if(path==='/movement-status'&&!result.confirmed){
+        const status=await this.ctx.storage.get('onedrive-status')||'';
+        result.locked=/423|resourceLocked/i.test(status);
+        result.paused=!!await this.ctx.storage.get('excel-paused');
+      }
       if(['/batch','/event','/import','/guide-replace'].includes(path))await this.wakeWorkbook();
       return reply(result);
-    }catch(e){return reply({error:e.status?e.message:'No se pudo guardar la operación.'},e.status||400)}
+    }catch(e){return reply({error:e.status?e.message:'No se pudo guardar la operación.',duplicate:e.duplicate===true},e.status||400)}
   }
 }

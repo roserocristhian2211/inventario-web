@@ -1,4 +1,4 @@
-import {destinations,familyOf} from './reports.js?v=19';
+import {destinations,familyOf} from './reports.js?v=28';
 
 export function measurements(events){
   const current=new Map();
@@ -99,6 +99,8 @@ export function installDirect(ctx){
   function movementView(m){
     const d=m.data,group=d.group?directMoves().filter(x=>x.data.group===d.group):[m];
     open(m.type==='entrada'?'Detalle de la entrada':'Detalle de la salida','<article class="movement-card"><h3>'+escape(m.prod)+'</h3><p>'+escape(m.code||'')+' · '+escape(m.date)+' · '+escape(d.dest||d.doc||'')+'</p><strong class="move-amount '+(m.type==='salida'?'dispatch':'')+'">'+(m.type==='salida'?'−':'+')+num(m.q)+' '+escape(m.unit)+'</strong><p>Registrado por '+escape(d.actor)+' · '+escape(new Date(m.ts).toLocaleString('es-EC'))+'</p></article>'+(d.editedBy?'<p>Modificado por '+escape(d.editedBy)+'</p>':'')+(group.length>1?grid(['Productos de la guía','Cantidad','Medida'],group.map(x=>[x.prod,x.q,x.unit])):'')+(admin()?'<div class="actions">'+button('movement-edit','Editar')+(isGuide(m)?button('guide-edit','Modificar guía completa'):'')+button('movement-remove','Eliminar')+'</div>':''));
+    const status=document.createElement('p');status.dataset.excelStatus=m.id;status.setAttribute('role','status');
+    status.textContent='Consultando BASE…';dialog.querySelector('.movement-card').append(status);ctx.refreshMovementStatus(status);
     on('#movement-edit',()=>editMovement(m));on('#guide-edit',()=>guideForm(group));
     on('#movement-remove',async()=>{if(confirm('¿Eliminar este movimiento y recalcular el saldo?')){await save([record('anular',{pid:d.pid,target:m.id})]);dialog.close();toast('Movimiento anulado.')}});
   }

@@ -175,3 +175,38 @@ export function setupReportUI(ctx){
     dialog.showModal();dialog.scrollTop=0;
   };
 }
+
+export function dailyBalances(products,moves,events,date){
+  const rows=new Map(products.filter(p=>p.cat==='directo'&&(!p.created||p.created<=date)&&(!p.removed||p.removed>=date))
+    .map(p=>[p.id,{p,opening:0,entrada:0,salida:0,ajuste:0,difference:null}]));
+  for(const m of moves){
+    const row=rows.get(m.data.pid);
+    if(!row||m.date>date||!['entrada','salida','ajuste'].includes(m.type))continue;
+    const units=Math.round(m.q*1e6);
+    const initial=m.type==='ajuste'&&['INICIO','INVENTARIO INICIAL'].includes(m.data.doc);
+    if(m.date===date&&!initial)row[m.type]+=units;
+    else row.opening+=m.type==='salida'?-units:units;
+  }
+  for(const e of events){
+    const row=rows.get(e.data.pid);
+    if(!row||e.type!=='medicion'||e.date!==date||row.lastCount>e.ts)continue;
+    row.lastCount=e.ts;
+    row.difference=Math.round((e.data.physical-e.data.system)*1e6)/1e6;
+  }
+  for(const r of rows.values()){
+    r.closing=(r.opening+r.entrada-r.salida+r.ajuste)/1e6;
+    for(const key of ['opening','entrada','salida','ajuste'])r[key]/=1e6;
+  }
+  return [...rows.values()].sort((a,b)=>Number(!!b.difference)-Number(!!a.difference)||compareProducts(a.p,b.p));
+}
+
+export function feedCoverage(products,moves,date){
+  const from=new Date(Date.parse(date+'T00:00:00Z')-7*86400000).toISOString().slice(0,10);
+  const used=new Map();
+  for(const m of moves)if(m.type==='salida'&&m.date>=from&&m.date<date)
+    used.set(m.data.pid,(used.get(m.data.pid)||0)+Math.round(m.q*1e6));
+  return products.filter(p=>familyOf(p)==='balanceado').map(p=>{
+    const average=(used.get(p.id)||0)/7e6;
+    return {p,average,days:average?p.stock/average:null};
+  }).sort((a,b)=>(a.days??Infinity)-(b.days??Infinity)||compareProducts(a.p,b.p));
+}

@@ -18,10 +18,24 @@ export class Ledger {
     sql.exec('CREATE TABLE IF NOT EXISTS photos(id TEXT PRIMARY KEY,data TEXT NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS receipt_expiry(id TEXT PRIMARY KEY,expires INTEGER NOT NULL)');
     sql.exec('CREATE INDEX IF NOT EXISTS expiry_time ON receipt_expiry(expires)');
+    sql.exec('CREATE TABLE IF NOT EXISTS excel_receipts(id TEXT PRIMARY KEY, signature TEXT NOT NULL, confirmed TEXT NOT NULL)');
+    sql.exec("CREATE INDEX IF NOT EXISTS movement_match ON events(json_extract(payload,'$.data.pid'),json_extract(payload,'$.date'),json_extract(payload,'$.type'))");
+    sql.exec("CREATE INDEX IF NOT EXISTS void_target ON events(json_extract(payload,'$.data.target'))");
     sql.exec('CREATE TABLE IF NOT EXISTS staff(email TEXT PRIMARY KEY,cargo TEXT NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS config(key TEXT PRIMARY KEY,value TEXT NOT NULL)');
   }
   first(query,...args){return [...this.sql.exec(query,...args)][0]}
+  similarMovement(e){
+    if(!['entrada','salida'].includes(e?.type)||e.data?.replaces||this.first('SELECT id FROM events WHERE id=?',String(e.id)))return null;
+    const ref=e.type==='entrada'?'doc':'dest';
+    return this.first(`SELECT e.id FROM events e
+      WHERE json_extract(e.payload,'$.data.pid')=? AND json_extract(e.payload,'$.date')=?
+      AND json_extract(e.payload,'$.type')=? AND json_extract(e.payload,'$.data.q')=?
+      AND lower(trim(coalesce(json_extract(e.payload,'$.data.${ref}'),'')))=lower(trim(?))
+      AND NOT EXISTS (SELECT 1 FROM events v WHERE json_extract(v.payload,'$.data.target')=e.id
+        AND json_extract(v.payload,'$.type')='anular') LIMIT 1`,
+      String(e.data?.pid),String(e.date),e.type,Math.round(Number(e.data?.q)*1e6)/1e6,String(e.data?.[ref]||''));
+  }
   append(e,user,historical=false){
     const admin=user.role==='admin', move=['entrada','salida'].includes(e?.type);
     requireValue(admin||move||e?.type==="medicion",'Solo el administrador puede realizar esta operación.',403);

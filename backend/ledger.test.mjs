@@ -133,3 +133,44 @@ test('solo el administrador confirma la lista vigente de bajas de Excel',async()
   assert.equal((await call('admin',review.token)).status,200);
   assert.equal(review.approved,true);
 });
+
+test('cuadre diario y cobertura por producto, con ajustes y conteo',async()=>{
+  const {dailyBalances,feedCoverage}=await import('../reports.js');
+  const p={id:'p',cat:'directo',name:'BALANCEADO A',stock:12};
+  const move=(type,date,q,doc='')=>({type,date,q,data:{pid:'p',doc}});
+  const date='2026-11-25';
+  const moves=[move('entrada','2026-11-12',40),move('salida','2026-11-18',14),
+    move('salida',date,3),move('entrada',date,4),move('ajuste',date,-1)];
+  const [r]=dailyBalances([p],moves,[{type:'medicion',date,ts:date,data:{pid:'p',physical:23,system:26}}],date);
+  assert.deepEqual([r.opening,r.entrada,r.salida,r.ajuste,r.closing,r.difference],[26,4,3,-1,26,-3]);
+  assert.equal(feedCoverage([p],moves,date)[0].days,6);
+  assert.equal(feedCoverage([p],[],date)[0].days,null);
+});
+
+test('despacho atómico, duplicados por destino y confirmación individual en BASE',async()=>{
+  const {Bodega}=await import('./worker.mjs');
+  const db=new DatabaseSync(':memory:');
+  const sql={exec(query,...params){const q=db.prepare(query);return q.columns().length?q.all(...params):(q.run(...params),[])}};
+  const storage={sql,get:async()=>null,transactionSync(fn){db.exec('BEGIN');try{const r=fn();db.exec('COMMIT');return r}catch(e){db.exec('ROLLBACK');throw e}}};
+  const subject='owner',b=new Bodega({storage},{ADMIN_SUB:subject,ADMIN_EMAIL:'owner@example.test'});
+  const pid=randomUUID(),event=(type,data)=>({id:randomUUID(),type,date:'2026-11-25',data:{pid,...data}});
+  const call=(path,body)=>b.fetch(new Request('https://internal/'+path,{method:'POST',body:JSON.stringify({subject,body})}));
+  const batch=(events,allowDuplicates=false)=>call('batch',{events,checkDuplicates:true,allowDuplicates});
+  await batch([event('create',{cat:'directo',name:'Test',code:'ABC',unit:'SC'})]);
+  const entry=event('entrada',{q:10,doc:'01'});
+  await batch([entry]);
+  const two=[event('salida',{q:3,dest:'01'}),event('salida',{q:2,dest:'PRE01'})];
+  assert.equal((await batch(two)).status,200);
+  assert.equal((await batch(two)).status,200);
+  const duplicate=event('salida',{q:3,dest:'01'});
+  assert.equal((await (await batch([event('salida',{q:1,dest:'02'}),duplicate])).json()).duplicate,true);
+  assert.equal(b.db.first('SELECT stock FROM products').stock,5e6);
+  assert.equal((await batch([duplicate],true)).status,200);
+  assert.equal((await batch([event('salida',{q:1,dest:'03'}),event('salida',{q:3,dest:'04'})])).status,409);
+  assert.equal(b.db.first('SELECT stock FROM products').stock,2e6);
+  const status=async id=>(await call('movement-status',{id})).json();
+  assert.equal((await status(entry.id)).confirmed,null);
+  sql.exec('INSERT INTO excel_receipts VALUES(?,?,?)',entry.id,'signature','2026-11-25T13:05:00Z');
+  assert.equal((await status(entry.id)).confirmed,'2026-11-25T13:05:00Z');
+  assert.equal((await status(two[0].id)).confirmed,null);
+});
