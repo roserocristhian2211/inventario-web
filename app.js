@@ -10,7 +10,7 @@ const original='Inventario Gambirasi';
 let db,events=[],photos=[],settings={},inventory=[],moves=[],alerts=[],page='inicio',editor=null,session=null,busy=false;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','&quot;':'&quot;',"'":'&#39;'}[c]));
 const uid=()=>crypto.randomUUID(), today=()=>{let d=new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-')};
-const fmt=n=>new Intl.NumberFormat('es-EC',{maximumFractionDigits:3}).format(n||0);
+const fmt=n=>new Intl.NumberFormat('es-EC',{maximumFractionDigits:6}).format(n||0);
 const number=v=>{let n=Number(v);if(!Number.isFinite(n))throw Error('Cantidad inválida');return n};
 function toast(t,bad=false){let el=$('#toast');el.textContent=t;el.className='show'+(bad?' error':'');clearTimeout(toast.id);toast.id=setTimeout(()=>el.className='',5000)}
 function fail(e){console.error(e);toast(e.message||String(e),true)}
@@ -140,7 +140,7 @@ function checkWorkbook(force=false){
     if(move){
       link.textContent='Ver última entrada sincronizada · '+move.prod+' · '+fmt(move.q)+' '+move.unit+(move.data.doc?' · Guía '+move.data.doc:'');
       link.onclick=()=>{
-        $('#find-move').value=move.code;
+        setMovementSearch(move.code,'',move.id);
         $('#moves-from').value=$('#moves-to').value=move.date;
         $('#filter-type').value='entrada';
         $('#filter-type').dispatchEvent(new Event('input'));
@@ -204,11 +204,11 @@ if(e.type==='create'){if(p.has(d.pid)){alerts.push('Producto duplicado');continu
 if(!x){alerts.push('Movimiento sin producto: '+e.id);continue}
 if(e.type==='edit'){Object.assign(x,{code:d.code,name:d.name,unit:d.unit,cat:d.cat,family:d.family,lbPerSack:d.lbPerSack,min:d.min||0,photo:d.photo||null});continue}
 if(e.type==='delete'){x.deleted=true;x.removed=e.date;continue}
-if(['entrada','salida','ajuste','traspaso'].includes(e.type)){let q=Number(d.q);if(!Number.isFinite(q)||(e.type!=='ajuste'&&q<=0)){alerts.push('Cantidad incorrecta: '+e.id);continue}if(e.type==='entrada')x.stock+=q;if(e.type==='salida')x.stock-=q;if(e.type==='ajuste')x.stock+=q;moves.push({...e,prod:x.name,code:x.code,unit:x.unit,q})}
+if(['entrada','salida','ajuste','traspaso'].includes(e.type)){let q=Number(d.q);if(!Number.isFinite(q)||(e.type!=='ajuste'&&q<=0)){alerts.push('Cantidad incorrecta: '+e.id);continue}const units=Math.round(q*1e6);if(e.type==='salida')x.stock-=units;else if(e.type!=='traspaso')x.stock+=units;moves.push({...e,prod:x.name,code:x.code,unit:x.unit,q})}
 }
 inventory=[...p.values()].sort(compareProducts);moves.reverse();
 if(TEAM_API)moves.sort((a,b)=>(b.entryOrder||0)-(a.entryOrder||0));
-let codes=new Set();for(const x of inventory){x.stock=Math.round(x.stock*100000)/100000;if(x.stock<0)alerts.push('Saldo negativo en '+x.code);if(!x.deleted&&x.cat==='directo'){if(codes.has(x.code.toLowerCase()))alerts.push('Código repetido '+x.code);codes.add(x.code.toLowerCase())}}}
+let codes=new Set();for(const x of inventory){x.stock/=1e6;if(x.stock<0)alerts.push('Saldo negativo en '+x.code);if(!x.deleted&&x.cat==='directo'){if(codes.has(x.code.toLowerCase()))alerts.push('Código repetido '+x.code);codes.add(x.code.toLowerCase())}}}
 async function reload(){events=await all('events');photos=await all('photos');for(const photo of photos.filter(p=>p.expires&&p.expires<=Date.now()))await store('photos','readwrite',s=>req(s.delete(photo.id)));photos=photos.filter(p=>!p.expires||p.expires>Date.now());compute();render()}
 function active(){return inventory.filter(p=>!p.deleted&&p.cat==='directo')}
 const pic=id=>photos.find(x=>x.id===id)?.data||'';
@@ -227,11 +227,20 @@ function ledgerCard(m,day){
   const photos=(m.data.attachments||[]).map((id,i)=>'<button class="small" data-picture="'+esc(id)+'">Foto '+(i+1)+'</button>').join('');
   return '<article class="ledger-card"><button class="ledger-record" data-detail="'+esc(m.id)+'"><span><strong>'+esc(m.prod)+'</strong><small>'+esc(metadata.join(' · '))+'</small></span><span class="ledger-qty '+(inbound?'received':'issued')+'"><b>'+(inbound?'+':'−')+fmt(m.q)+'</b><small>'+esc(m.unit)+'</small></span></button>'+photos+'</article>';
 }
+function setMovementSearch(text,productId='',movementId=''){
+  const input=$('#find-move');
+  input.value=text;
+  input.dataset.productId=productId;
+  input.dataset.movementId=movementId;
+}
 function renderLedger(){
   const type=$('#filter-type').value,query=$('#find-move').value.trim().toLowerCase();
   const from=$('#moves-from').value,to=$('#moves-to').value,pond=$('#ledger-pond').value;
   const direct=new Set(inventory.filter(p=>p.cat==='directo').map(p=>p.id));
-  const rows=moves.filter(m=>direct.has(m.data.pid)&&(type==='todos'||type===m.type)&&(!from||m.date>=from)&&(!to||m.date<=to)&&(!pond||m.data.dest===pond)&&[m.prod,m.code,m.data.doc,m.data.origin,m.data.dest,m.date].some(v=>String(v??'').toLowerCase().includes(query)));
+  const {productId,movementId}=$('#find-move').dataset;
+  const matchesSearch=m=>movementId?m.id===movementId:productId?m.data.pid===productId:
+    [m.prod,m.code,m.data.doc,m.data.origin,m.data.dest,m.date].some(v=>String(v??'').toLowerCase().includes(query));
+  const rows=moves.filter(m=>direct.has(m.data.pid)&&(type==='todos'||type===m.type)&&(!from||m.date>=from)&&(!to||m.date<=to)&&(!pond||m.data.dest===pond)&&matchesSearch(m));
   for(const tab of $$('[data-ledger-type]'))tab.setAttribute('aria-pressed',String(tab.dataset.ledgerType===type));
   $('#movement-count').textContent=rows.length+(rows.length===1?' registro':' registros');
   const dateError=$('#move-date-error');
@@ -508,7 +517,7 @@ function setup(){
   $('#daily-rows').onclick=e=>{
     const id=e.target.closest('[data-day-product]')?.dataset.dayProduct;
     if(!id)return;
-    $('#find-move').value=inventory.find(p=>p.id===id).code;
+    setMovementSearch(inventory.find(p=>p.id===id).code,id);
     $('#moves-from').value=$('#moves-to').value=$('#daily-date').value;
     $('#filter-type').value='todos';$('#filter-type').dispatchEvent(new Event('input'));show('movimientos');
   };
@@ -518,7 +527,7 @@ function setup(){
     if(filter==='today'){
       $('#moves-from').value=$('#moves-to').value=today();
       $('#filter-type').value='todos';
-      $('#find-move').value='';
+      setMovementSearch('');
       $('#filter-type').dispatchEvent(new Event('input'));
       show('movimientos');
       return;
@@ -540,7 +549,8 @@ function setup(){
   });
  $$('.navitem').forEach(x=>x.onclick=()=>show(x.dataset.page));$$('[data-action]').forEach(x=>x.onclick=()=>openEditor(x.dataset.action));$('#editor').addEventListener('submit',submitEditor);$('#close').onclick=$('#cancel').onclick=()=>$('#modal').close();
 document.addEventListener('click',async e=>{let t=e.target.closest('[data-edit],[data-move],[data-delete],[data-count]');if(!t)return;try{if(t.dataset.edit)openEditor('producto',t.dataset.edit);if(t.dataset.move)openEditor('movimiento',t.dataset.move);if(t.dataset.count)openEditor('conteo',t.dataset.count);if(t.dataset.delete){let p=inventory.find(x=>x.id===t.dataset.delete);if(p&&confirm('¿Dar de baja el producto '+p.name+'? Sus movimientos se conservarán.'))await saveEvent('delete',{pid:p.id})}}catch(err){fail(err)}});
-['#find-product','#find-move','#moves-from','#moves-to'].forEach(s=>$(s).addEventListener('input',()=>{moveLimit=80;render()}));
+$('#find-move').addEventListener('input',e=>{setMovementSearch(e.target.value);moveLimit=80;render()});
+['#find-product','#moves-from','#moves-to'].forEach(s=>$(s).addEventListener('input',()=>{moveLimit=80;render()}));
 $('#save-name').onclick=async()=>{try{if(TEAM_API)await teamCall('/name',{name:$('#name').value.trim()||'Inventario Web'});await setting('name',$('#name').value.trim()||'Inventario Web');render();toast('Nombre guardado')}catch(error){fail(error)}};
 $('#export-json').onclick=exportJSON;$('#export-csv').onclick=exportCSV;
 $('#import-csv').onchange=async e=>{try{if(e.target.files[0])await importCSV(e.target.files[0])}catch(err){fail(err)}e.target.value=''};
