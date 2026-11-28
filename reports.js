@@ -210,3 +210,16 @@ export function feedCoverage(products,moves,date){
     return {p,average,days:average?p.stock/average:null};
   }).sort((a,b)=>(a.days??Infinity)-(b.days??Infinity)||compareProducts(a.p,b.p));
 }
+
+export function weeklyFeedOrder(products,moves,date,coverage,reserve){
+  if(!Number.isSafeInteger(coverage)||coverage<1||!Number.isSafeInteger(reserve)||reserve<0)
+    throw Error('Ingresa días enteros: cobertura de al menos 1 y reserva de 0 o más.');
+  return feedCoverage(products,moves,date).map(({p,average})=>{
+    const weekUsed=Math.round(average*7e6);
+    const missing=Math.max(0,weekUsed*(coverage+reserve)-Math.round(p.stock*1e6)*7);
+    if(!Number.isSafeInteger(missing))throw Error('La cantidad calculada supera el rango admitido.');
+    const sacks=/^(SC|SACOS?)$/i.test(p.unit.trim());
+    const quantity=average===0?null:sacks?Math.ceil(missing/7e6):Math.ceil(missing/7)/1e6;
+    return {p,average,quantity};
+  });
+}

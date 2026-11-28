@@ -1,4 +1,4 @@
-import {destinations} from './reports.js?v=28';
+import {destinations} from './reports.js?v=30';
 const norm=x=>String(x??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase();
 const key=x=>[x.date,x.data.dest,x.data.pid,Math.round(x.data.q*1e6)].join('|');
 function dest(x){

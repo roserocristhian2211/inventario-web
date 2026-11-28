@@ -1,7 +1,7 @@
-import {installDirect,pondRows} from './direct.js?v=28';
-import {installImport,planInventoryImport} from './consumption.js?v=28';
+import {installDirect,pondRows} from './direct.js?v=30';
+import {installImport,planInventoryImport} from './consumption.js?v=30';
 let refreshCounts,moveLimit=80;
-import {dailyBalances,feedCoverage,setupReportUI,familyOf,compareProducts,destinations} from './reports.js?v=28';
+import {dailyBalances,feedCoverage,weeklyFeedOrder,setupReportUI,familyOf,compareProducts,destinations} from './reports.js?v=30';
 import {TEAM_API} from './team-config.js?v=6';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -291,7 +291,35 @@ function balanceTable(head,rows){
   return '<table><thead><tr>'+head.map(x=>'<th>'+esc(x)+'</th>').join('')+'</tr></thead><tbody>'+
     rows.map(cells=>'<tr>'+cells.map(cell=>'<td>'+cell+'</td>').join('')+'</tr>').join('')+'</tbody></table>';
 }
+function orderDays(){
+  return [$('#order-days').valueAsNumber,$('#order-reserve').valueAsNumber];
+}
+function currentOrder(){
+  return weeklyFeedOrder(active(),moves,today(),...orderDays());
+}
+function renderOrder(){
+  const summary=$('#order-summary'),table=$('#order-rows'),button=$('#order-export');
+  try{
+    const rows=currentOrder(),needed=rows.filter(r=>r.quantity>0);
+    summary.textContent=rows.length?(needed.length?'Balanceados para pedir: '+needed.length:'Sin cantidades sugeridas para pedir.'):'Sin balanceados en el catálogo.';
+    table.innerHTML=rows.length?balanceTable(['Balanceado','Medida','Saldo actual','Consumo diario','Pedido sugerido'],rows.map(({p,average,quantity})=>[
+      esc(p.name),esc(p.unit),fmt(p.stock),fmt(average),quantity===null?'Sin consumo':fmt(quantity)])):'';
+    button.disabled=!needed.length;
+  }catch(error){summary.textContent=error.message;table.replaceChildren();button.disabled=true}
+}
+async function exportOrder(){
+  try{
+    const date=today(),[coverage,reserve]=orderDays(),rows=currentOrder().filter(r=>r.quantity>0);
+    if(!rows.length)return;
+    const {exportSheets}=await import('./report-vendor.js?v=19');
+    await exportSheets('Pedido-semanal-'+date,[{name:'Pedido sugerido',rows:[
+      ['Pedido sugerido de balanceado',date],['Días de cobertura',coverage],['Días de reserva',reserve],
+      ['Código','Balanceado','Unidad','Saldo actual','Consumo diario','Cantidad a pedir'],
+      ...rows.map(({p,average,quantity})=>[p.code,p.name,p.unit,p.stock,average,quantity])]}]);
+  }catch(error){fail(error)}
+}
 function renderPlanning(){
+  if(page==='pedido')renderOrder();
   if(page==='diario'){
     const date=$('#daily-date').value;
     const rows=date?dailyBalances(inventory,moves,events,date):[];
@@ -512,6 +540,9 @@ function setup(){
   setupSettingsMenu();
   setupLedger();
   $('#open-daily').onclick=()=>{$('#daily-date').value=today();show('diario')};
+  $$('[data-open-order]').forEach(button=>button.onclick=()=>show('pedido'));
+  $('#order-days').oninput=$('#order-reserve').oninput=renderOrder;
+  $('#order-export').onclick=exportOrder;
   $('#open-coverage').onclick=()=>show('cobertura');
   $('#daily-date').oninput=renderPlanning;
   $('#daily-rows').onclick=e=>{

@@ -174,3 +174,17 @@ test('despacho atómico, duplicados por destino y confirmación individual en BA
   assert.equal((await status(entry.id)).confirmed,'2026-11-25T13:05:00Z');
   assert.equal((await status(two[0].id)).confirmed,null);
 });
+
+test('pedido semanal descuenta stock, distingue unidades y excluye el día en curso',async()=>{
+  const {weeklyFeedOrder}=await import('../reports.js');
+  const product=(id,unit,stock)=>({id,unit,stock,name:'Balanceado '+id,family:'balanceado'});
+  const products=[product('a','SC',120),product('b','KG',8),product('c','SC',0),product('d','SC',500)];
+  const move=(id,q,date='2026-11-20')=>({type:'salida',date,q,data:{pid:id}});
+  const moves=[move('a',210.1),move('a',100,'2026-11-27'),move('b',7.7),move('d',7)];
+  const order=(days,reserve)=>weeklyFeedOrder(products,moves,'2026-11-27',days,reserve);
+  const amounts=new Map(order(7,2).map(r=>[r.p.id,r.quantity]));
+  assert.equal(amounts.get('a'),151);assert.equal(amounts.get('b'),1.9);
+  assert.equal(amounts.get('c'),null);assert.equal(amounts.get('d'),0);
+  assert.equal(order(7,0).find(r=>r.p.id==='a').quantity,91);
+  assert.throws(()=>order(0,1));assert.throws(()=>order(7,-1));assert.throws(()=>order(7,0.5));
+});
